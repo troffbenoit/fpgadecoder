@@ -1,0 +1,14 @@
+# Vivado / Alchitry generated files
+build/
+
+# Backup files
+*.backup
+*.bak
+*~
+
+# Logs
+*.log
+*.jou
+
+# Temporary files
+*.tmp

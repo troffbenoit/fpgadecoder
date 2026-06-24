@@ -1,0 +1,39 @@
+testbench ls138_tb {
+    ls138 dut
+
+    test bank_decode_test {
+        dut.g1 = 1
+        dut.g2a_n = 0
+        dut.g2b_n = 0
+
+        dut.a = 0
+        dut.b = 0
+        dut.c = 0
+        $tick()
+        $assert(dut.y == 8b11111110)
+
+        dut.a = 1
+        dut.b = 0
+        dut.c = 0
+        $tick()
+        $assert(dut.y == 8b11111101)
+
+        dut.a = 0
+        dut.b = 1
+        dut.c = 0
+        $tick()
+        $assert(dut.y == 8b11111011)
+
+        dut.a = 1
+        dut.b = 1
+        dut.c = 0
+        $tick()
+        $assert(dut.y == 8b11110111)
+
+        dut.a = 0
+        dut.b = 0
+        dut.c = 1
+        $tick()
+        $assert(dut.y == 8b11101111)
+    }
+}

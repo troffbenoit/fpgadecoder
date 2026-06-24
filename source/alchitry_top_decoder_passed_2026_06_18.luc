@@ -1,0 +1,477 @@
+module alchitry_top (
+    input clk,              // Main 100 MHz FPGA clock.
+    input rst_n,            // Reset button. Active LOW.
+
+    output led[8],          // 8 LEDs on the Alchitry Au board.
+
+    input usb_rx,           // USB serial receive.
+    output usb_tx,          // USB serial transmit.
+
+    output io_led[3][8],    // IO V2 LED banks.
+    output io_segment[8],   // IO V2 seven-segment segment lines.
+    output io_select[4],    // IO V2 seven-segment digit select lines.
+    input io_button[5],     // IO V2 push buttons.
+    input io_dip[3][8]      // IO V2 DIP switch banks.
+) {
+
+    // ========================================================
+    // PROJECT:
+    //     6502 FPGA Address Decoder
+    //
+    // FILE:
+    //     alchitry_top.luc
+    //
+    // PURPOSE:
+    //     Model the 6502 KiCad address decoder in FPGA logic.
+    //
+    //     Bank 0 DIP switches pretend to be address lines:
+    //
+    //         SW1 = A13
+    //         SW2 = A14
+    //         SW3 = A15
+    //         SW4 = A12
+    //
+    //     AU LEDs show decoded chip-selects:
+    //
+    //         AU LED0 = ROM selected
+    //         AU LED1 = RAM selected
+    //         AU LED2 = UARTB selected
+    //         AU LED3 = ACIACS selected
+    //
+    //     The IO V2 seven-segment display shows the upper
+    //     address hex digit:
+    //
+    //         A15 A14 A13 A12
+    //
+    //     Examples:
+    //
+    //         $0000 -> display 0
+    //         $5000 -> display 5
+    //         $6000 -> display 6
+    //         $8000 -> display 8
+    //
+    // ========================================================
+    // CHANGE LOG:
+    //
+    // 2026-06-11
+    // - Verified LS138 decode.
+    // - Verified JP1-style enable.
+    // - Added ROMCSB decode.
+    // - Added RAMCS decode.
+    // - Added A12.
+    // - Added UARTB decode at $5000.
+    // - Added ACIACS decode at $6000.
+    // - Added AU LED indicators.
+    // - Added upper-address hex display.
+    // - Removed temporary seven-segment test override lines.
+    //
+    // ========================================================
+    // NASA / FLIGHT-READY STYLE RULES USED:
+    //
+    // - Drive every top-level output.
+    // - Drive every module input.
+    // - Use safe defaults before specific assignments.
+    // - Keep active-low signals clearly named.
+    // - Test one small function at a time.
+    // - Do not gate the FPGA clock.
+    // - Use clear signal names.
+    // - Avoid clever code that is hard to debug.
+    // - Keep decoder logic combinational.
+    // - Preserve known-good behavior when adding features.
+    //
+    // ========================================================
+    // QUICK VIM SEARCH TAGS:
+    //
+    //     /@BANK0_SWITCHES
+    //     /@JP1_ENABLE
+    //     /@LS138_WIRING
+    //     /@ROM_DECODE
+    //     /@RAM_DECODE
+    //     /@UART_DECODE
+    //     /@ACIA_DECODE
+    //     /@HEX_DISPLAY
+    //     /@AU_LED_OUTPUTS
+    //
+    // ========================================================
+
+
+    // ========================================================
+    // INTERNAL SIGNALS
+    // ========================================================
+
+    sig rst                 // Clean internal reset signal.
+
+    sig a12                 // Fake 6502 A12.
+    sig a13                 // Fake 6502 A13.
+    sig a14                 // Fake 6502 A14.
+    sig a15                 // Fake 6502 A15.
+
+    sig jp1_vcc_path        // Fake JP1 VCC enable path.
+    sig jp1_clk_path        // Fake JP1 CLK enable path.
+    sig decode_enable       // Final LS138 enable signal.
+
+    sig y[8]                // Active-low LS138 outputs.
+
+    sig addr_hi_nibble[4]   // A15 A14 A13 A12 as one hex digit.
+    sig hex_segments[8]     // Seven-segment output pattern.
+
+    sig romcsb              // Active-low ROM chip select.
+    sig ramcs               // Active-low RAM chip select.
+    sig uartb               // Active-low UARTB chip select.
+    sig aciacs              // Active-low ACIA chip select.
+
+
+    // ========================================================
+    // MODULE INSTANCES
+    // ========================================================
+
+    ls138 decoder           // 74LS138-style decoder.
+
+
+    // ========================================================
+    // CLOCKED RESET CONDITIONER
+    // ========================================================
+
+    .clk(clk) {
+        reset_conditioner reset_cond
+    }
+
+
+    // ========================================================
+    // MAIN COMBINATIONAL LOGIC
+    // ========================================================
+
+    always {
+
+        // ====================================================
+        // RESET CONDITIONER
+        // ====================================================
+
+        reset_cond.in = ~rst_n
+        rst = reset_cond.out
+
+
+        // ====================================================
+        // USB LOOPBACK
+        // ====================================================
+        //
+        // We are not using USB serial here.
+        // This simply prevents usb_tx from being undriven.
+        // ====================================================
+
+        usb_tx = usb_rx
+
+
+        // ====================================================
+        // SAFE DEFAULT OUTPUTS
+        // ====================================================
+
+        led = 8h00
+
+        io_led[0] = 8h00
+        io_led[1] = 8h00
+        io_led[2] = 8h00
+
+        io_segment = 8hFF
+        io_select  = 4hF
+
+
+        // ====================================================
+        // @BANK0_SWITCHES
+        // BANK 0 SWITCHES -> FAKE 6502 ADDRESS BUS
+        // ====================================================
+        //
+        // Verified IO V2 mapping:
+        //
+        //     Bank 0 SW1 = io_dip[0][7] -> A13
+        //     Bank 0 SW2 = io_dip[0][6] -> A14
+        //     Bank 0 SW3 = io_dip[0][5] -> A15
+        //     Bank 0 SW4 = io_dip[0][4] -> A12
+        // ====================================================
+
+        a13 = io_dip[0][7]
+        a14 = io_dip[0][6]
+        a15 = io_dip[0][5]
+        a12 = io_dip[0][4]
+
+
+        // ====================================================
+        // @JP1_ENABLE
+        // JP1 ENABLE MODEL
+        // ====================================================
+        //
+        // Bank 2 SW1 pretends JP1 is tied to VCC.
+        // Bank 2 SW2 pretends JP1 is tied to CLK.
+        //
+        // For normal testing:
+        //
+        //     Bank 2 SW1 = ON
+        //     Bank 2 SW2 = OFF
+        // ====================================================
+
+        jp1_vcc_path = io_dip[2][7]
+        jp1_clk_path = io_dip[2][6]
+
+        decode_enable = jp1_vcc_path | jp1_clk_path
+
+        io_led[2][7] = jp1_vcc_path
+        io_led[2][6] = jp1_clk_path
+
+
+        // ====================================================
+        // @LS138_WIRING
+        // ADDRESS LINES INTO LS138
+        // ====================================================
+        //
+        // Real schematic mapping:
+        //
+        //     A13 -> LS138 A
+        //     A14 -> LS138 B
+        //     A15 -> LS138 C
+        //
+        // The LS138 decodes C B A.
+        // Therefore it decodes A15 A14 A13.
+        // ====================================================
+
+        decoder.a = a13
+        decoder.b = a14
+        decoder.c = a15
+
+
+        // ====================================================
+        // LS138 ENABLE PINS
+        // ====================================================
+        //
+        // 74LS138 enable rule:
+        //
+        //     G1    must be HIGH.
+        //     G2A_N must be LOW.
+        //     G2B_N must be LOW.
+        // ====================================================
+
+        decoder.g1 = decode_enable
+        decoder.g2a_n = 0
+        decoder.g2b_n = 0
+
+
+        // ====================================================
+        // LS138 OUTPUTS
+        // ====================================================
+        //
+        // y[0] through y[7] are active LOW.
+        // ====================================================
+
+        y = decoder.y
+
+
+        // ====================================================
+        // @ROM_DECODE
+        // ROM DECODE
+        // ====================================================
+        //
+        // ROM range:
+        //
+        //     $8000 - $FFFF
+        //
+        // This means A15 = 1.
+        //
+        // LS138 outputs:
+        //
+        //     Y4 = $8000 - $9FFF
+        //     Y5 = $A000 - $BFFF
+        //     Y6 = $C000 - $DFFF
+        //     Y7 = $E000 - $FFFF
+        //
+        // Since Y4-Y7 are active LOW:
+        //
+        //     if any one is LOW, ROM is selected.
+        //
+        // ANDing active-low outputs preserves that:
+        //
+        //     romcsb = 0 means ROM selected.
+        // ====================================================
+
+        romcsb = y[4] & y[5] & y[6] & y[7]
+
+
+        // ====================================================
+        // @RAM_DECODE
+        // RAM DECODE
+        // ====================================================
+        //
+        // RAM range:
+        //
+        //     $0000 - $3FFF
+        //
+        // LS138 Y0 is active LOW for:
+        //
+        //     A15 A14 A13 = 000
+        //
+        // Therefore RAMCS is just Y0.
+        // ====================================================
+
+        ramcs = y[0]
+
+
+        // ====================================================
+        // @UART_DECODE
+        // UARTB DECODE
+        // ====================================================
+        //
+        // UARTB target:
+        //
+        //     $5000 - $5FFF
+        //
+        // Upper address bits:
+        //
+        //     A15 A14 A13 A12 = 0101
+        //
+        // LS138 Y2 covers:
+        //
+        //     $4000 - $5FFF
+        //
+        // A12 separates:
+        //
+        //     A12 = 0 -> $4000
+        //     A12 = 1 -> $5000
+        //
+        // UARTB should be active LOW only when:
+        //
+        //     y[2] = 0
+        //     a12  = 1
+        //
+        // Logic:
+        //
+        //     uartb = y[2] | ~a12
+        // ====================================================
+
+        uartb = y[2] | ~a12
+
+
+        // ====================================================
+        // @ACIA_DECODE
+        // ACIA DECODE
+        // ====================================================
+        //
+        // ACIACS target:
+        //
+        //     $6000 - $6FFF
+        //
+        // Upper address bits:
+        //
+        //     A15 A14 A13 A12 = 0110
+        //
+        // LS138 Y3 covers:
+        //
+        //     $6000 - $7FFF
+        //
+        // A12 separates:
+        //
+        //     A12 = 0 -> $6000
+        //     A12 = 1 -> $7000
+        //
+        // ACIA should be active LOW only when:
+        //
+        //     y[3] = 0
+        //     a12  = 0
+        //
+        // Logic:
+        //
+        //     aciacs = y[3] | a12
+        // ====================================================
+
+        aciacs = y[3] | a12
+
+
+        // ====================================================
+        // @AU_LED_OUTPUTS
+        // AU LED CHIP-SELECT INDICATORS
+        // ====================================================
+        //
+        // Real chip-selects are active LOW:
+        //
+        //     0 = selected
+        //     1 = not selected
+        //
+        // LEDs are active HIGH:
+        //
+        //     1 = ON
+        //     0 = OFF
+        //
+        // Therefore:
+        //
+        //     LED = inverse of chip-select
+        //
+        // LED map:
+        //
+        //     LED0 = ROM
+        //     LED1 = RAM
+        //     LED2 = UARTB
+        //     LED3 = ACIACS
+        // ====================================================
+
+        led[0] = ~romcsb
+        led[1] = ~ramcs
+        led[2] = ~uartb
+        led[3] = ~aciacs
+
+
+        // ====================================================
+        // @HEX_DISPLAY
+        // UPPER ADDRESS HEX DISPLAY
+        // ====================================================
+        //
+        // The display shows:
+        //
+        //     A15 A14 A13 A12
+        //
+        // as one hexadecimal digit.
+        //
+        // Correct address order:
+        //
+        //     addr_hi_nibble = A15 A14 A13 A12
+        //
+        // Examples:
+        //
+        //     0000 -> 0
+        //     0101 -> 5
+        //     0110 -> 6
+        //     1000 -> 8
+        //
+        // Seven-segment lines are active LOW:
+        //
+        //     0 = segment ON
+        //     1 = segment OFF
+        // ====================================================
+
+        addr_hi_nibble = c{a15, a14, a13, a12}
+
+        // Safe default: blank display.
+        hex_segments = 8hFF
+
+        case (addr_hi_nibble) {
+            4h0: hex_segments = 8hC0
+            4h1: hex_segments = 8hF9
+            4h2: hex_segments = 8hA4
+            4h3: hex_segments = 8hB0
+            4h4: hex_segments = 8h99
+            4h5: hex_segments = 8h92
+            4h6: hex_segments = 8h82
+            4h7: hex_segments = 8hF8
+            4h8: hex_segments = 8h80
+            4h9: hex_segments = 8h90
+            4hA: hex_segments = 8h88
+            4hB: hex_segments = 8h83
+            4hC: hex_segments = 8hC6
+            4hD: hex_segments = 8hA1
+            4hE: hex_segments = 8h86
+            4hF: hex_segments = 8h8E
+        }
+
+        io_segment = hex_segments
+
+        // 4hE enables the rightmost display digit.
+        // Digit selects are active LOW.
+        io_select = 4hE
+    }
+}

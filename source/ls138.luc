@@ -1,0 +1,48 @@
+module ls138 (
+    input a,
+    input b,
+    input c,
+
+    input g1,
+    input g2a_n,
+    input g2b_n,
+
+    output y[8]
+) {
+
+    always {
+        // Disabled/default state:
+        // 74LS138 outputs are active-low.
+        // 1 = inactive
+        // 0 = selected
+        y = 8hFF
+
+        if (g1 && !g2a_n && !g2b_n) {
+            case (c{c, b, a}) {
+                3b000:
+                    y[0] = 0
+
+                3b001:
+                    y[1] = 0
+
+                3b010:
+                    y[2] = 0
+
+                3b011:
+                    y[3] = 0
+
+                3b100:
+                    y[4] = 0
+
+                3b101:
+                    y[5] = 0
+
+                3b110:
+                    y[6] = 0
+
+                3b111:
+                    y[7] = 0
+            }
+        }
+    }
+}

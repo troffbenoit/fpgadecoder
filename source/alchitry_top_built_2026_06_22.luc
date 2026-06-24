@@ -1,0 +1,488 @@
+module alchitry_top (
+	input clk,
+	input rst_n,
+
+	output led[8],
+
+	input usb_rx,
+	output usb_tx,
+
+	output io_led[3][8],
+	output io_segment[8],
+	output io_select[4],
+	input io_button[5],
+	input io_dip[3][8]
+) {
+
+	// ========================================================
+	// PROJECT:
+	//     6502 FPGA Address Decoder
+	//
+	// FILE:
+	//     alchitry_top.luc
+	//
+	// PURPOSE:
+	//     Model the 6502 KiCad address decoder in FPGA logic.
+	//
+	//     Bank 0 DIP switches currently pretend to be the upper
+	//     6502 address lines:
+	//
+	//         SW1 = A13
+	//         SW2 = A14
+	//         SW3 = A15
+	//         SW4 = A12
+	//
+	//     AU LEDs show decoded chip-selects:
+	//
+	//         AU LED0 = ROM selected
+	//         AU LED1 = RAM selected
+	//         AU LED2 = UARTB selected
+	//         AU LED3 = ACIACS selected
+	//
+	//     The IO V2 four-digit seven-segment display shows a
+	//     live 16-bit address:
+	//
+	//         A15..A12  A11..A8  A7..A4  A3..A0
+	//
+	//     Since only A12-A15 are available from DIP switches
+	//     right now, the lower 12 bits are forced to zero.
+	//
+	//     Examples:
+	//
+	//         A15..A12 = 0000 -> display 0000
+	//         A15..A12 = 0101 -> display 5000
+	//         A15..A12 = 0110 -> display 6000
+	//         A15..A12 = 1000 -> display 8000
+	//         A15..A12 = 1111 -> display F000
+	//
+	// ========================================================
+	// CHANGE LOG:
+	//
+	// 2026-06-18
+	// - Replaced hand-written seven-segment scanner with the
+	//   known-good Alchitry multi_seven_seg display driver.
+	// - Removed manual display_counter, display_digit,
+	//   display_nibble, and hex_segments logic.
+	// - Removed manual hex-to-segment lookup table.
+	// - Removed visible walking/right-to-left scan behavior.
+	// - Display still follows Bank 0 DIP switches live.
+	// - No address latch is used in this Option A version.
+	// - Address being decoded is the same address being shown.
+	// - Added display_digits[4][4] as the four hex nibbles sent
+	//   into the multi_seven_seg module.
+	// - io_segment and io_select are now driven from:
+	//
+	//       io_segment = ~seg.seg
+	//       io_select  = ~seg.sel
+	//
+	// - This matches the previous non-flickering IO V2 test.
+	//
+	// 2026-06-18
+	// - Decoder hardware test passed.
+	// - Saved known-good decoder baseline.
+	// - Corrected RAM documentation to $0000-$3FFF.
+	// - Added full 4-digit seven-segment address display.
+	// - Preserved ROM/RAM/UARTB/ACIACS decode behavior.
+	//
+	// 2026-06-11
+	// - Verified LS138 decode.
+	// - Verified JP1-style enable.
+	// - Added ROMCSB decode.
+	// - Added RAMCS decode.
+	// - Added A12.
+	// - Added UARTB decode at $5000.
+	// - Added ACIACS decode at $6000.
+	// - Added AU LED indicators.
+	//
+	// ========================================================
+	// NASA / FLIGHT-READY STYLE RULES USED:
+	//
+	// 01. Drive every top-level output.
+	// 02. Drive every module input.
+	// 03. Use safe defaults before specific assignments.
+	// 04. Keep active-low signals clearly named.
+	// 05. Test one small function at a time.
+	// 06. Do not gate the FPGA clock.
+	// 07. Use clear signal names.
+	// 08. Avoid clever code that is hard to debug.
+	// 09. Keep decoder logic combinational.
+	// 10. Preserve known-good behavior when adding features.
+	//
+	// DISPLAY-SPECIFIC FLIGHT-READY NOTES:
+	//
+	// - The IO V2 seven-segment display is multiplexed.
+	// - Do not manually scan it in this version.
+	// - Use the proven Alchitry multi_seven_seg module.
+	// - Provide four 4-bit values to seg.values.
+	// - Let multi_seven_seg handle digit timing.
+	// - The display follows the DIP switches live.
+	// - The decoder and the display use the same address bits.
+	//
+	// ========================================================
+	// QUICK VIM SEARCH TAGS:
+	//
+	//     /@BANK0_SWITCHES
+	//     /@BANK1_SWITCHES
+	//     /@JP1_ENABLE
+	//     /@LS138_WIRING
+	//     /@ROM_DECODE
+	//     /@RAM_DECODE
+	//     /@UART_DECODE
+	//     /@ACIA_DECODE
+	//     /@HEX_DISPLAY
+	//     /@AU_LED_OUTPUTS
+	//
+	// ========================================================
+
+
+	// ========================================================
+	// INTERNAL SIGNALS
+	// ========================================================
+
+	sig rst
+
+	sig a0
+	sig a1
+	sig a2
+	sig a3
+	sig a4
+	sig a5
+	sig a6
+	sig a7
+	sig a8
+	sig a9
+	sig a10
+	sig a11
+	sig a12
+	sig a13
+	sig a14
+	sig a15
+
+	// ========================================================
+	// AUTO ADDRESS COUNTER SIGNALS
+	//
+	// These signals will let the FPGA generate fake 6502
+	// addresses automatically later.
+	//
+	// For this first step, we are only declaring the signals.
+	// We are NOT using them yet.
+	// This keeps the change small and safe.
+	// ========================================================
+
+	sig auto_mode              // 1 = FPGA counter mode, 0 = DIP switch mode
+	sig manual_address[16]     // 16-bit address made from the DIP switches
+	sig auto_address[16]       // 16-bit address made by an FPGA counter
+	sig active_address[16]     // final address used by display and decoder
+
+	sig jp1_vcc_path
+	sig jp1_clk_path
+	sig decode_enable
+
+	sig y[8]
+
+	sig addr3[4]
+	sig addr2[4]
+	sig addr1[4]
+	sig addr0[4]
+
+	sig display_digits[4][4]
+
+	sig rom_cs_n
+	sig ram_cs_n
+	sig uartb_cs_n
+	sig acia_cs_n
+
+
+	// ========================================================
+	// MODULE INSTANCES
+	// ========================================================
+
+	ls138 decoder
+
+
+	// ========================================================
+	// CLOCKED LOGIC
+	// ========================================================
+
+	.clk(clk) {
+
+	dff slow_counter[26]
+	dff auto_counter[16]
+
+	reset_conditioner reset_cond
+
+	.rst(rst) {
+		multi_seven_seg seg (
+		#DIV($is_sim() ? 1 : 16),
+		#DIGITS(4)
+	)
+	}
+	}
+
+	// ========================================================
+	// MAIN COMBINATIONAL LOGIC
+	// ========================================================
+
+	always {
+
+		// ====================================================
+		// RESET CONDITIONER
+		// ====================================================
+
+		reset_cond.in = ~rst_n
+		rst = reset_cond.out
+
+
+		// ====================================================
+		// USB LOOPBACK
+		// ====================================================
+
+		usb_tx = usb_rx
+
+
+		// ====================================================
+		// SAFE DEFAULT OUTPUTS
+		// ====================================================
+
+		led = 8h00
+
+		io_led[0] = 8h00
+		io_led[1] = 8h00
+		io_led[2] = 8h00
+
+		display_digits[0] = 4h0
+		display_digits[1] = 4h0
+		display_digits[2] = 4h0
+		display_digits[3] = 4h0
+
+		// ====================================================
+		// AUTO COUNTER UPDATE
+		//
+		// slow_counter increments every FPGA clock.
+		//
+		// auto_counter increments only when slow_counter rolls
+		// over to zero. This makes the displayed address change
+		// slowly enough to see.
+		// ====================================================
+		//
+
+		// Hold both counters steady for now.
+		// This removes any display activity while we debug.
+
+		slow_counter.d = slow_counter.q
+		auto_counter.d = auto_counter.q
+
+		//		slow_counter.d = slow_counter.q + 1
+
+		//		if (slow_counter.q == 0) {
+		//			auto_counter.d = auto_counter.q + 1
+		//			} else {
+		//				auto_counter.d = auto_counter.q
+		//				}
+
+		// ====================================================
+		// AUTO ADDRESS SOURCE
+		//
+		// auto_counter.q is the current 16-bit counter value.
+		//
+		// auto_address is the named address source that will
+		// later be selected when auto mode is turned on.
+		// ====================================================
+
+		auto_address = auto_counter.q
+
+
+
+
+
+		// ====================================================
+		// @BANK0_SWITCHES
+		// BANK 0 SWITCHES -> FAKE 6502 ADDRESS BUS
+		//
+		// SW1 = A15
+		// SW2 = A14
+		// SW3 = A13
+		// SW4 = A12
+		// SW5 = A11
+		// SW6 = A10
+		// SW7 = A9
+		// SW8 = A8
+		// ====================================================
+
+		a15 = io_dip[0][7]
+		a14 = io_dip[0][6]
+		a13 = io_dip[0][5]
+		a12 = io_dip[0][4]
+		a11 = io_dip[0][3]
+		a10 = io_dip[0][2]
+		a9  = io_dip[0][1]
+		a8  = io_dip[0][0] 
+
+		// ====================================================
+		// @BANK1_SWITCHES
+		// BANK 1 SWITCHES -> LOWER 6502 ADDRESS BUS
+		//
+		// SW1 = A7
+		// SW2 = A6
+		// SW3 = A5
+		// SW4 = A4
+		// SW5 = A3
+		// SW6 = A2
+		// SW7 = A1
+		// SW8 = A0
+		// ====================================================
+
+		a7 = io_dip[1][7]
+		a6 = io_dip[1][6]
+		a5 = io_dip[1][5]
+		a4 = io_dip[1][4]
+		a3 = io_dip[1][3]
+		a2 = io_dip[1][2]
+		a1 = io_dip[1][1]
+		a0 = io_dip[1][0]
+
+		// ====================================================
+		// @MANUAL_ADDRESS
+		// BUILD 16-BIT MANUAL ADDRESS FROM DIP SWITCHES
+		//
+		// Bank 0 supplies the upper byte:
+		//
+		//     A15 A14 A13 A12 A11 A10 A9 A8
+		//
+		// Bank 1 supplies the lower byte:
+		//
+		//     A7 A6 A5 A4 A3 A2 A1 A0
+		//
+		// This creates one complete 16-bit fake 6502 address.
+		// For now, this address is still manually controlled
+		// by the DIP switches.
+		// ====================================================
+
+		manual_address = c{
+		a15, a14, a13, a12,
+		a11, a10, a9,  a8,
+		a7,  a6,  a5,  a4,
+		a3,  a2,  a1,  a0
+		}
+		// ====================================================
+		// @ACTIVE_ADDRESS_SELECT
+		//
+		// For now the only address source is the DIP switches.
+		//
+		// Later:
+		//
+		//     manual_address = DIP switches
+		//     auto_address   = FPGA counter
+		//
+		// active_address is the single address used by the
+		// display and decoder.
+		// ====================================================
+
+		active_address = manual_address
+
+
+		// ====================================================
+		// @JP1_ENABLE
+		// JP1 ENABLE MODEL
+		// ====================================================
+
+		jp1_vcc_path = io_dip[2][7]
+		jp1_clk_path = io_dip[2][6]
+
+		decode_enable = jp1_vcc_path | jp1_clk_path
+
+		io_led[2][7] = jp1_vcc_path
+		io_led[2][6] = jp1_clk_path
+
+
+		// ====================================================
+		// @LS138_WIRING
+		// ADDRESS LINES INTO LS138
+		// ====================================================
+
+		decoder.a = a13
+		decoder.b = a14
+		decoder.c = a15
+
+		decoder.g1 = decode_enable
+		decoder.g2a_n = 0
+		decoder.g2b_n = 0
+
+		y = decoder.y
+
+
+		// ====================================================
+		// @ROM_DECODE
+		// ROM DECODE: $8000 - $FFFF
+		// ====================================================
+
+		rom_cs_n = y[4] & y[5] & y[6] & y[7]
+
+
+		// ====================================================
+		// @RAM_DECODE
+		// RAM DECODE: $0000 - $3FFF
+		// ====================================================
+
+		ram_cs_n = y[0]
+
+
+		// ====================================================
+		// @UART_DECODE
+		// UARTB DECODE: $5000 - $5FFF
+		// ====================================================
+
+		uartb_cs_n = y[2] | ~a12
+
+
+		// ====================================================
+		// @ACIA_DECODE
+		// ACIA DECODE: $6000 - $6FFF
+		// ====================================================
+
+		acia_cs_n = y[3] | a12
+
+
+		// ====================================================
+		// @AU_LED_OUTPUTS
+		// AU LED CHIP-SELECT INDICATORS
+		// ====================================================
+
+		led[0] = ~rom_cs_n
+		led[1] = ~ram_cs_n
+		led[2] = ~uartb_cs_n
+		led[3] = ~acia_cs_n
+
+		led[4] = io_button[0]
+		led[5] = io_button[1]
+		led[6] = io_button[2]
+		led[7] = io_button[3]
+
+
+		// ====================================================
+		// @HEX_DISPLAY
+		// LIVE FULL 16-BIT ADDRESS DISPLAY
+		// ====================================================
+
+		addr3 = active_address[15:12]
+		addr2 = active_address[11:8]
+		addr1 = active_address[7:4]
+		addr0 = active_address[3:0]
+
+
+		//	addr3 = c{a15, a14, a13, a12}
+		//	addr2 = c{a11, a10, a9, a8} 
+		//	addr1 = c{a7, a6, a5, a4}
+		//	addr0 = c{a3, a2, a1, a0}
+
+		display_digits[0] = addr0
+		display_digits[1] = addr1
+		display_digits[2] = addr2
+		display_digits[3] = addr3
+
+		seg.values = display_digits
+
+		io_segment = ~seg.seg
+		io_select  = ~seg.sel
+		}
+		}

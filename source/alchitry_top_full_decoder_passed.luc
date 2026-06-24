@@ -1,0 +1,143 @@
+module alchitry_top (
+	input clk,
+	input rst_n,
+	output led[8],
+	input usb_rx,
+	output usb_tx,
+	output io_led[3][8],
+	output io_segment[8],
+	output io_select[4],
+	input io_button[5],
+	input io_dip[3][8]
+) {
+
+	// ========================================================
+	// 6502 FPGA Address Decoder
+	//
+	// LAST VERIFIED CHECKPOINT:
+	//     LS138      PASS
+	//     JP1        PASS
+	//     RAMCS      PASS
+	//     ROMCSB     PASS
+	//     A12        PASS
+	//     UARTB      PASS
+	//     ACIACS     NOT YET ADDED
+	//
+	// AU LED MAP:
+	//     led[0] = ROM selected
+	//     led[1] = RAM selected
+	//     led[2] = UARTB selected
+	//
+	// ACTIVE LOW RULE:
+	//     Real chip selects: 0 = selected
+	//     LEDs:              1 = selected indicator ON
+	//
+	// VIM QUICK JUMP TAGS:
+	//     /@BANK0_SWITCHES
+	//     /@JP1_ENABLE
+	//     /@LS138_WIRING
+	//     /@ROM_DECODE
+	//     /@RAM_DECODE
+	//     /@UART_DECODE
+	//     /@AU_LED_OUTPUTS
+	// ========================================================
+
+	sig rst
+
+	sig a12
+	sig a13
+	sig a14
+	sig a15
+
+	sig jp1_vcc_path
+	sig jp1_clk_path
+	sig decode_enable
+
+	sig y[8]
+
+	sig romcsb
+	sig ramcs
+	sig uartb
+	sig aciacs
+
+	ls138 decoder
+
+	.clk(clk) {
+		reset_conditioner reset_cond
+		}
+
+		always {
+			reset_cond.in = ~rst_n
+			rst = reset_cond.out
+
+			usb_tx = usb_rx
+
+			led = 8h00
+
+			io_led[0] = 8h00
+			io_led[1] = 8h00
+			io_led[2] = 8h00
+
+			io_segment = 8hFF
+			io_select  = 4hF
+
+			// @BANK0_SWITCHES
+			// Bank 0 SW1 = A13
+			// Bank 0 SW2 = A14
+			// Bank 0 SW3 = A15
+			// Bank 0 SW4 = A12
+			a13 = io_dip[0][7]
+			a14 = io_dip[0][6]
+			a15 = io_dip[0][5]
+			a12 = io_dip[0][4]
+
+			// @JP1_ENABLE
+			// Bank 2 SW1 = fake VCC enable
+			// Bank 2 SW2 = fake CLK enable
+			jp1_vcc_path = io_dip[2][7]
+			jp1_clk_path = io_dip[2][6]
+			decode_enable = jp1_vcc_path | jp1_clk_path
+
+			io_led[2][7] = jp1_vcc_path
+			io_led[2][6] = jp1_clk_path
+
+			// @LS138_WIRING
+			decoder.a = a13
+			decoder.b = a14
+			decoder.c = a15
+
+			decoder.g1 = decode_enable
+			decoder.g2a_n = 0
+			decoder.g2b_n = 0
+
+			y = decoder.y
+
+			// @ROM_DECODE
+			// ROM $8000-$FFFF, active low.
+			romcsb = y[4] & y[5] & y[6] & y[7]
+
+			// @RAM_DECODE
+			// RAM $0000-$1FFF, active low.
+			ramcs = y[0]
+
+			// @UART_DECODE
+			// UARTB $5000-$5FFF.
+			// A15 A14 A13 A12 = 0101.
+			// LS138 Y2 covers $4000-$5FFF.
+			// A12=1 selects the $5000 half.
+			uartb = y[2] | ~a12
+
+			// @ACIA_DECODE
+			// ACIACS = $6000
+			// A15 A14 A13 A12 = 0110
+			// Y3 selected, A12 LOW.
+			aciacs = y[3] | a12
+
+			// @AU_LED_OUTPUTS
+			led[0] = ~romcsb
+			led[1] = ~ramcs
+			led[2] = ~uartb
+			led[3] = ~aciacs
+
+			}
+			}

@@ -1,0 +1,586 @@
+module alchitry_top (
+    input clk,              // Main 100 MHz FPGA clock.
+    input rst_n,            // Reset button. Active LOW. 0 = reset pressed.
+
+    output led[8],          // 8 LEDs on the Alchitry Au board.
+
+    input usb_rx,           // USB serial receive pin.
+    output usb_tx,          // USB serial transmit pin.
+
+    output io_led[3][8],    // IO V2 LED banks.
+    output io_segment[8],   // IO V2 seven-segment display segments.
+    output io_select[4],    // IO V2 seven-segment digit select lines.
+    input io_button[5],     // IO V2 push buttons.
+    input io_dip[3][8]      // IO V2 DIP switch banks.
+) {
+
+    // ========================================================
+    // PROJECT:
+    //     6502 FPGA Address Decoder
+    //
+    // FILE:
+    //     alchitry_top.luc
+    //
+    // DATE:
+    //     2026-06-11
+    //
+    // PURPOSE:
+    //     This is the top-level Lucid file for modeling the
+    //     6502 address decoder on the Alchitry Au V2 FPGA.
+    //
+    //     We are building the decoder one small verified step
+    //     at a time.
+    //
+    // CURRENT VERIFIED FEATURES:
+    //     - LS138-style address decode works.
+    //     - JP1-style enable works.
+    //     - ROM decode works on AU LED0.
+    //     - RAM decode works on AU LED1.
+    //
+    // IMPORTANT ACTIVE-LOW RULE:
+    //     Real chip-select signals are active LOW.
+    //
+    //         0 = chip selected
+    //         1 = chip not selected
+    //
+    //     Human LED indicators are active HIGH.
+    //
+    //         1 = LED ON
+    //         0 = LED OFF
+    //
+    //     Therefore, an LED indicator normally gets the inverse
+    //     of the real chip-select signal.
+    //
+    // CHANGE LOG:
+    //     2026-06-08
+    //     - Verified Bank 0 address switch mapping.
+    //     - Verified LS138 decode behavior.
+    //     - Added JP1-style enable model.
+    //
+    //     2026-06-11
+    //     - Added romcsb signal.
+    //     - Modeled ROM decode from LS138 outputs Y4-Y7.
+    //     - Added AU LED0 ROM-selected indicator.
+    //
+    //     2026-06-11
+    //     - Added ramcs signal.
+    //     - Modeled RAM decode directly from LS138 output Y0.
+    //     - Added AU LED1 RAM-selected indicator.
+    //
+    //     2026-06-11
+    //     - Added a12 signal for the next decoder stage.
+    //     - Added //@ navigation tags for fast Vim searching.
+    //     - Fixed Bank 0 SW4 comment wording.
+    //     - No intentional logic change to verified RAM/ROM.
+    //
+    // NASA / FLIGHT-READY STYLE RULES USED HERE:
+    //     - Drive every top-level output.
+    //     - Drive every module input.
+    //     - Use safe defaults before overrides.
+    //     - Use clear signal names.
+    //     - Do not gate the FPGA clock.
+    //     - Keep active-low signals clearly named.
+    //     - Test one small function at a time.
+    //     - Prefer simple readable logic over clever logic.
+    // ========================================================
+
+
+    // ========================================================
+    // //@QUICK_NAVIGATION
+    //
+    // Search these tags in Vim with:
+    //
+    //     /@BANK0_SWITCHES
+    //
+    // Then press:
+    //
+    //     n
+    //
+    // to jump to the next match.
+    //
+    // Navigation tags in this file:
+    //
+    //     //@SIGNALS_RESET
+    //     //@SIGNALS_ADDRESS_BUS
+    //     //@SIGNALS_JP1_ENABLE
+    //     //@SIGNALS_LS138
+    //     //@SIGNALS_CHIP_SELECTS
+    //     //@MODULES
+    //     //@RESET_CONDITIONER
+    //     //@SAFE_DEFAULTS
+    //     //@BANK0_SWITCHES
+    //     //@JP1_ENABLE
+    //     //@JP1_STATUS_LEDS
+    //     //@LS138_WIRING
+    //     //@LS138_ENABLES
+    //     //@LS138_OUTPUTS
+    //     //@ROM_DECODE
+    //     //@RAM_DECODE
+    //     //@UART_DECODE
+    //     //@ACIA_DECODE
+    //     //@AU_LED_OUTPUTS
+    // ========================================================
+
+
+    // ========================================================
+    // //@SIGNALS_RESET
+    // SECTION 1:
+    // INTERNAL RESET SIGNAL
+    // ========================================================
+
+    sig rst                 // Clean internal reset signal.
+
+
+    // ========================================================
+    // //@SIGNALS_ADDRESS_BUS
+    // SECTION 2:
+    // FAKE 6502 ADDRESS BUS SIGNALS
+    // ========================================================
+    //
+    // These signals pretend to be real 6502 address lines.
+    //
+    // Right now they come from IO V2 DIP switches.
+    //
+    // Later, after level shifting, these can come from the real
+    // 5V 6502 address bus.
+    //
+    // Current switch mapping:
+    //
+    //     Bank 0 SW1 -> A13
+    //     Bank 0 SW2 -> A14
+    //     Bank 0 SW3 -> A15
+    //     Bank 0 SW4 -> A12
+    //
+    // A12 is added now for the next stage.
+    // It is not used by RAM/ROM yet.
+    // It will be used for UARTB and ACIACS decoding.
+    // ========================================================
+
+    sig a12                 // Fake 6502 A12. Used later for I/O decode.
+    sig a13                 // Fake 6502 A13. Feeds LS138 input A.
+    sig a14                 // Fake 6502 A14. Feeds LS138 input B.
+    sig a15                 // Fake 6502 A15. Feeds LS138 input C.
+
+
+    // ========================================================
+    // //@SIGNALS_JP1_ENABLE
+    // SECTION 3:
+    // JP1 ENABLE PATH SIGNALS
+    // ========================================================
+    //
+    // Your KiCad schematic has JP1.
+    //
+    // JP1 can tie the LS138 active-high enable to:
+    //
+    //     VCC
+    //
+    // or:
+    //
+    //     CLK
+    //
+    // In this FPGA test, we model that with two DIP switches.
+    // ========================================================
+
+    sig jp1_vcc_path        // Bank 2 SW1. Fake VCC jumper path.
+    sig jp1_clk_path        // Bank 2 SW2. Fake CLK jumper path.
+    sig decode_enable       // Combined enable signal feeding LS138 G1.
+
+
+    // ========================================================
+    // //@SIGNALS_LS138
+    // SECTION 4:
+    // LS138 OUTPUT BUS
+    // ========================================================
+    //
+    // A real 74LS138 has active-low outputs.
+    //
+    //     y[n] = 0 means output n is selected.
+    //     y[n] = 1 means output n is not selected.
+    // ========================================================
+
+    sig y[8]                // Active-low LS138 outputs Y0 through Y7.
+
+
+    // ========================================================
+    // //@SIGNALS_CHIP_SELECTS
+    // SECTION 5:
+    // CHIP SELECT SIGNALS
+    // ========================================================
+    //
+    // These are the decoded outputs we eventually want to drive
+    // into real chips.
+    //
+    // Active-low rule:
+    //
+    //     0 = selected
+    //     1 = not selected
+    //
+    // Names:
+    //
+    //     romcsb:
+    //         ROM Chip Select Bar.
+    //         The "b" means "bar", meaning active LOW.
+    //
+    //     ramcs:
+    //         RAM Chip Select.
+    //         We also treat it as active LOW because it comes
+    //         directly from the active-low LS138 output.
+    // ========================================================
+
+    sig romcsb              // Active-low ROM chip select.
+    sig ramcs               // Active-low RAM chip select.
+
+
+    // ========================================================
+    // //@MODULES
+    // SECTION 6:
+    // MODULE INSTANCES
+    // ========================================================
+
+    ls138 decoder           // U1-style 74LS138 decoder model.
+
+
+    // ========================================================
+    // SECTION 7:
+    // CLOCKED HARDWARE
+    // ========================================================
+    //
+    // The reset conditioner uses the FPGA clock.
+    //
+    // The address decoder itself is combinational logic.
+    //
+    // Combinational means:
+    //
+    //     switch changes -> logic changes -> LED changes
+    //
+    // There is no clock required for the decoder behavior.
+    // ========================================================
+
+    .clk(clk) {
+        reset_conditioner reset_cond
+    }
+
+
+    // ========================================================
+    // SECTION 8:
+    // MAIN WIRING
+    // ========================================================
+
+    always {
+
+        // ====================================================
+        // //@RESET_CONDITIONER
+        // 8.1 RESET CONDITIONER
+        // ====================================================
+        //
+        // rst_n is active LOW from the board.
+        //
+        //     rst_n = 0 means reset button pressed.
+        //     rst_n = 1 means reset button not pressed.
+        //
+        // The reset conditioner expects active HIGH reset input.
+        // So we invert rst_n with ~rst_n.
+        // ====================================================
+
+        reset_cond.in = ~rst_n
+        rst = reset_cond.out
+
+
+        // ====================================================
+        // 8.2 USB LOOPBACK
+        // ====================================================
+        //
+        // We are not using USB serial in this decoder test.
+        //
+        // But usb_tx is a top-level output.
+        // Flight-ready rule:
+        //
+        //     Do not leave outputs floating or undriven.
+        //
+        // So we safely echo usb_rx back to usb_tx.
+        // ====================================================
+
+        usb_tx = usb_rx
+
+
+        // ====================================================
+        // //@SAFE_DEFAULTS
+        // 8.3 SAFE DEFAULT OUTPUTS
+        // ====================================================
+        //
+        // Before doing anything clever, set all outputs to a
+        // known safe value.
+        //
+        // This prevents accidental leftover values.
+        // ====================================================
+
+        led = 8h00
+
+        io_led[0] = 8h00
+        io_led[1] = 8h00
+        io_led[2] = 8h00
+
+        // Seven-segment display is not used yet.
+        //
+        // 8hFF and 4hF keep it off for now.
+        io_segment = 8hFF
+        io_select  = 4hF
+
+
+        // ====================================================
+        // //@BANK0_SWITCHES
+        // 8.4 BANK 0 SWITCHES -> FAKE ADDRESS BUS
+        // ====================================================
+        //
+        // This is where the fake 6502 address lines are made.
+        //
+        // The IO V2 switch order is reversed in the ACF mapping.
+        //
+        // Verified mapping:
+        //
+        //     Bank 0 SW1 = io_dip[0][7] -> A13
+        //     Bank 0 SW2 = io_dip[0][6] -> A14
+        //     Bank 0 SW3 = io_dip[0][5] -> A15
+        //     Bank 0 SW4 = io_dip[0][4] -> A12
+        //
+        // A13/A14/A15 feed the LS138.
+        //
+        // A12 is saved for the next step:
+        //
+        //     UARTB  at $5000
+        //     ACIACS at $6000
+        // ====================================================
+
+        a13 = io_dip[0][7]      // Bank 0 SW1.
+        a14 = io_dip[0][6]      // Bank 0 SW2.
+        a15 = io_dip[0][5]      // Bank 0 SW3.
+        a12 = io_dip[0][4]      // Bank 0 SW4.
+
+
+        // ====================================================
+        // //@JP1_ENABLE
+        // 8.5 JP1 - CLK / VCC ENABLE JUMPER MODEL
+        // ====================================================
+        //
+        // Bank 2 SW1 models JP1 tied to VCC.
+        //
+        // Bank 2 SW2 models JP1 tied to CLK.
+        //
+        // For normal first testing:
+        //
+        //     Bank 2 SW1 = ON
+        //     Bank 2 SW2 = OFF
+        //
+        // This means:
+        //
+        //     decoder enabled from fake VCC
+        //
+        // Current simple model:
+        //
+        //     If either switch is ON, the decoder is enabled.
+        // ====================================================
+
+        jp1_vcc_path = io_dip[2][7]     // Bank 2 SW1.
+        jp1_clk_path = io_dip[2][6]     // Bank 2 SW2.
+
+        decode_enable = jp1_vcc_path | jp1_clk_path
+
+
+        // ====================================================
+        // //@JP1_STATUS_LEDS
+        // 8.6 JP1 STATUS LEDS ON IO V2 BANK 2
+        // ====================================================
+        //
+        // These LEDs are only indicators.
+        //
+        // They help prove that Bank 2 switch inputs are being
+        // read correctly.
+        //
+        //     IO Bank 2 LED1 = VCC path indicator.
+        //     IO Bank 2 LED2 = CLK path indicator.
+        // ====================================================
+
+        io_led[2][7] = jp1_vcc_path
+        io_led[2][6] = jp1_clk_path
+
+
+        // ====================================================
+        // //@LS138_WIRING
+        // 8.7 CONNECT ADDRESS BITS TO LS138
+        // ====================================================
+        //
+        // This matches the real schematic:
+        //
+        //     A13 -> LS138 A input
+        //     A14 -> LS138 B input
+        //     A15 -> LS138 C input
+        //
+        // The LS138 decodes the input order as:
+        //
+        //     C B A
+        //
+        // In our system that means:
+        //
+        //     A15 A14 A13
+        // ====================================================
+
+        decoder.a = a13
+        decoder.b = a14
+        decoder.c = a15
+
+
+        // ====================================================
+        // //@LS138_ENABLES
+        // 8.8 CONNECT LS138 ENABLE PINS
+        // ====================================================
+        //
+        // Real 74LS138 enable rule:
+        //
+        //     G1    must be 1.
+        //     G2A_N must be 0.
+        //     G2B_N must be 0.
+        //
+        // G1 comes from our JP1 model.
+        //
+        // The two active-low enable pins are tied LOW.
+        // ====================================================
+
+        decoder.g1 = decode_enable
+        decoder.g2a_n = 0
+        decoder.g2b_n = 0
+
+
+        // ====================================================
+        // //@LS138_OUTPUTS
+        // 8.9 READ LS138 OUTPUTS
+        // ====================================================
+        //
+        // Copy the decoder module outputs into local signal y.
+        //
+        // y[0] through y[7] are active LOW.
+        // ====================================================
+
+        y = decoder.y
+
+
+        // ====================================================
+        // //@ROM_DECODE
+        // 8.10 ROM DECODE
+        // ====================================================
+        //
+        // ROM starts at address $8000.
+        //
+        // $8000 means:
+        //
+        //     A15 = 1
+        //
+        // With A15/A14/A13 decoded by the LS138:
+        //
+        //     Y4 = $8000 - $9FFF
+        //     Y5 = $A000 - $BFFF
+        //     Y6 = $C000 - $DFFF
+        //     Y7 = $E000 - $FFFF
+        //
+        // Since LS138 outputs are active LOW:
+        //
+        //     Any selected Y output goes LOW.
+        //
+        // Therefore:
+        //
+        //     romcsb = y[4] & y[5] & y[6] & y[7]
+        //
+        // If any one of Y4/Y5/Y6/Y7 is LOW, romcsb becomes LOW.
+        //
+        // That correctly selects the ROM.
+        // ====================================================
+
+        romcsb = y[4] & y[5] & y[6] & y[7]
+
+
+        // ====================================================
+        // //@RAM_DECODE
+        // 8.11 RAM DECODE
+        // ====================================================
+        //
+        // RAM starts at address $0000.
+        //
+        // The LS138 output Y0 is selected when:
+        //
+        //     A15 A14 A13 = 000
+        //
+        // That covers:
+        //
+        //     $0000 - $1FFF
+        //
+        // Since Y0 is already active LOW, RAMCS can be copied
+        // directly from Y0.
+        // ====================================================
+
+        ramcs = y[0]
+
+
+        // ====================================================
+        // //@UART_DECODE
+        // 8.12 UART DECODE PLACEHOLDER
+        // ====================================================
+        //
+        // Not implemented in this cleanup-only version.
+        //
+        // Later:
+        //
+        //     UARTB at $5000 will use A12 plus LS138 logic.
+        //
+        // No logic is added here yet because RAM and ROM were
+        // already verified and this revision is only cleanup.
+        // ====================================================
+
+
+        // ====================================================
+        // //@ACIA_DECODE
+        // 8.13 ACIA DECODE PLACEHOLDER
+        // ====================================================
+        //
+        // Not implemented in this cleanup-only version.
+        //
+        // Later:
+        //
+        //     ACIACS at $6000 will use A12 plus LS138 logic.
+        //
+        // No logic is added here yet because RAM and ROM were
+        // already verified and this revision is only cleanup.
+        // ====================================================
+
+
+        // ====================================================
+        // //@AU_LED_OUTPUTS
+        // 8.14 AU LED INDICATORS
+        // ====================================================
+        //
+        // Real chip-select signals:
+        //
+        //     0 = selected
+        //     1 = not selected
+        //
+        // Human LED indicators:
+        //
+        //     1 = LED ON
+        //     0 = LED OFF
+        //
+        // Therefore each LED gets the inverse of the real
+        // active-low chip-select signal.
+        //
+        // Current AU LED assignment:
+        //
+        //     AU LED0 = ROM selected
+        //     AU LED1 = RAM selected
+        //
+        // Reserved future assignment:
+        //
+        //     AU LED2 = UARTB selected
+        //     AU LED3 = ACIACS selected
+        // ====================================================
+
+        led[0] = ~romcsb
+        led[1] = ~ramcs
+    }
+}
