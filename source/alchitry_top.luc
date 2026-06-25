@@ -149,7 +149,8 @@ module alchitry_top (
         
         slow_counter.d = slow_counter.q
         auto_counter.d = auto_counter.q
-        auto_address = auto_counter.q
+        //auto_address = auto_counter.q
+		auto_address = 16h8000
         
         // ====================================================
         // @BANK0_SWITCHES
