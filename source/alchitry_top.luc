@@ -245,7 +245,7 @@ module alchitry_top (
         led[2] = ~uartb_cs_n
         led[3] = ~acia_cs_n
         
-        led[4] = io_button[0]
+        led[4] = auto_mode   
         led[5] = io_button[1]
         led[6] = io_button[2]
         led[7] = io_button[3]
