@@ -170,132 +170,137 @@ module alchitry_top (
 				slow_counter.d = slow_counter.q
 
 				if (io_button[4] & ~step_button_old.q) {
-					auto_counter.d = auto_counter.q + 16h1000
-					} else {
-						auto_counter.d = auto_counter.q
-						}
 
-						step_button_old.d = io_button[4]
+					if (auto_counter.q == 16hF000) {
+						auto_counter.d = 16h0000
+						} else {
+							auto_counter.d = auto_counter.q + 16h1000
+							}
 
-						auto_address = auto_counter.q
-
-
-						// ====================================================
-						// @BANK0_SWITCHES
-						// BANK 0 = A15..A8
-						// ====================================================
-
-						a15 = io_dip[0][7]
-						a14 = io_dip[0][6]
-						a13 = io_dip[0][5]
-						a12 = io_dip[0][4]
-						a11 = io_dip[0][3]
-						a10 = io_dip[0][2]
-						a9  = io_dip[0][1]
-						a8  = io_dip[0][0]
-
-						// ====================================================
-						// @BANK1_SWITCHES
-						// BANK 1 = A7..A0
-						// ====================================================
-
-						a7 = io_dip[1][7]
-						a6 = io_dip[1][6]
-						a5 = io_dip[1][5]
-						a4 = io_dip[1][4]
-						a3 = io_dip[1][3]
-						a2 = io_dip[1][2]
-						a1 = io_dip[1][1]
-						a0 = io_dip[1][0]
-
-						// ====================================================
-						// BUILD MANUAL ADDRESS
-						// ====================================================
-
-						manual_address = c{
-						a15, a14, a13, a12,
-						a11, a10, a9,  a8,
-						a7,  a6,  a5,  a4,
-						a3,  a2,  a1,  a0
-						}
-
-						// ====================================================
-						// @ACTIVE_ADDRESS_SELECT
-						// ====================================================
-
-						if (auto_mode) {
-							active_address = auto_address
 							} else {
-								active_address = manual_address
+								auto_counter.d = auto_counter.q
+								}
+
+								step_button_old.d = io_button[4]
+
+								auto_address = auto_counter.q
+
+								// ====================================================
+								// @BANK0_SWITCHES
+								// BANK 0 = A15..A8
+								// ====================================================
+
+								a15 = io_dip[0][7]
+								a14 = io_dip[0][6]
+								a13 = io_dip[0][5]
+								a12 = io_dip[0][4]
+								a11 = io_dip[0][3]
+								a10 = io_dip[0][2]
+								a9  = io_dip[0][1]
+								a8  = io_dip[0][0]
+
+								// ====================================================
+								// @BANK1_SWITCHES
+								// BANK 1 = A7..A0
+								// ====================================================
+
+								a7 = io_dip[1][7]
+								a6 = io_dip[1][6]
+								a5 = io_dip[1][5]
+								a4 = io_dip[1][4]
+								a3 = io_dip[1][3]
+								a2 = io_dip[1][2]
+								a1 = io_dip[1][1]
+								a0 = io_dip[1][0]
+
+								// ====================================================
+								// BUILD MANUAL ADDRESS
+								// ====================================================
+
+								manual_address = c{
+								a15, a14, a13, a12,
+								a11, a10, a9,  a8,
+								a7,  a6,  a5,  a4,
+								a3,  a2,  a1,  a0
 								}
 
 								// ====================================================
-								// @JP1_ENABLE
-								// Bank 2 SW1 or SW2 enables LS138.
+								// @ACTIVE_ADDRESS_SELECT
 								// ====================================================
 
-								jp1_vcc_path = io_dip[2][7]
-								jp1_clk_path = io_dip[2][6]
+								if (auto_mode) {
+									active_address = auto_address
+									} else {
+										active_address = manual_address
+										}
 
-								decode_enable = jp1_vcc_path | jp1_clk_path
+										// ====================================================
+										// @JP1_ENABLE
+										// Bank 2 SW1 or SW2 enables LS138.
+										// ====================================================
 
-								io_led[2][7] = jp1_vcc_path
-								io_led[2][6] = jp1_clk_path
+										jp1_vcc_path = io_dip[2][7]
+										jp1_clk_path = io_dip[2][6]
 
-								// ====================================================
-								// @LS138_WIRING
-								// ====================================================
+										decode_enable = jp1_vcc_path | jp1_clk_path
 
-								decoder.a = active_address[13]
-								decoder.b = active_address[14]
-								decoder.c = active_address[15]
+										io_led[2][7] = jp1_vcc_path
+										io_led[2][6] = jp1_clk_path
 
-								decoder.g1 = decode_enable
-								decoder.g2a_n = 0
-								decoder.g2b_n = 0
+										// ====================================================
+										// @LS138_WIRING
+										// ====================================================
 
-								y = decoder.y
+										decoder.a = active_address[13]
+										decoder.b = active_address[14]
+										decoder.c = active_address[15]
 
-								// ====================================================
-								// CHIP SELECT DECODE
-								// ====================================================
+										decoder.g1 = decode_enable
+										decoder.g2a_n = 0
+										decoder.g2b_n = 0
 
-								rom_cs_n   = y[4] & y[5] & y[6] & y[7]
-								ram_cs_n   = y[0]
-								uartb_cs_n = y[2] | ~active_address[12]
-								acia_cs_n  = y[3] |  active_address[12]
+										y = decoder.y
 
-								// ====================================================
-								// @AU_LED_OUTPUTS
-								// ====================================================
+										// ====================================================
+										// CHIP SELECT DECODE
+										// ====================================================
 
-								led[0] = ~rom_cs_n
-								led[1] = ~ram_cs_n
-								led[2] = ~uartb_cs_n
-								led[3] = ~acia_cs_n
+										rom_cs_n   = y[4] & y[5] & y[6] & y[7]
+										ram_cs_n   = y[0]
+										uartb_cs_n = y[2] | ~active_address[12]
+										acia_cs_n  = y[3] |  active_address[12]
 
-								led[4] = auto_mode   
-								led[5] = io_button[1]
-								led[6] = io_button[2]
-								led[7] = io_button[3]
+										// ====================================================
+										// @AU_LED_OUTPUTS
+										// ====================================================
 
-								// ====================================================
-								// @HEX_DISPLAY
-								// ====================================================
+										led[0] = ~rom_cs_n
+										led[1] = ~ram_cs_n
+										led[2] = ~uartb_cs_n
+										led[3] = ~acia_cs_n
 
-								addr3 = active_address[15:12]
-								addr2 = active_address[11:8]
-								addr1 = active_address[7:4]
-								addr0 = active_address[3:0]
+										led[4] = auto_mode   
+										led[5] = io_button[1]
+										led[6] = io_button[2]
+										led[7] = io_button[3]
 
-								display_digits[0] = addr0
-								display_digits[1] = addr1
-								display_digits[2] = addr2
-								display_digits[3] = addr3
+										// ====================================================
+										// @HEX_DISPLAY
+										// ====================================================
 
-								seg.values = display_digits
+										addr3 = active_address[15:12]
+										addr2 = active_address[11:8]
+										addr1 = active_address[7:4]
+										addr0 = active_address[3:0]
 
-								io_segment = ~seg.seg
-								io_select  = ~seg.sel
-								}
-								}
+										display_digits[0] = addr0
+										display_digits[1] = addr1
+										display_digits[2] = addr2
+										display_digits[3] = addr3
+
+										seg.values = display_digits
+
+										io_segment = ~seg.seg
+										io_select  = ~seg.sel
+										}
+										}
