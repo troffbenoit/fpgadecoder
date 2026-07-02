@@ -1,306 +1,308 @@
 module alchitry_top (
-	input clk,
-	input rst_n,
+    input clk,
+    input rst_n,
 
-	output led[8],
+    output led[8],
 
-	input usb_rx,
-	output usb_tx,
+    input usb_rx,
+    output usb_tx,
 
-	output io_led[3][8],
-	output io_segment[8],
-	output io_select[4],
-	input io_button[5],
-	input io_dip[3][8]
+    output io_led[3][8],
+    output io_segment[8],
+    output io_select[4],
+    input io_button[5],
+    input io_dip[3][8]
 ) {
 
-	// ========================================================
-	// PROJECT:
-	//     6502 FPGA Address Decoder
-	//
-	// CHANGE LOG:
-	//
-	// 2026-06-24
-	// - Cleaned indentation and brace structure.
-	// - Removed unused button4_old logic.
-	// - Auto mode now uses Bank 2 SW3, not pushbutton.
-	// - Fixed auto counter timing.
-	// - Removed bad slow_counter.q[25] level-count logic.
-	// - Auto counter now advances only on one rollover tick.
-	// - Auto mode walks by 4 KB pages:
-	//       0000, 1000, 2000, ... F000
-	// - Manual mode remains stable and known-good.
-	//
-	// NASA / FLIGHT-READY STYLE RULES:
-	//
-	// 01. Drive every top-level output.
-	// 02. Drive every module input.
-	// 03. Use safe defaults before specific assignments.
-	// 04. Keep active-low signals clearly named with _n.
-	// 05. Test one small function at a time.
-	// 06. Do not gate the FPGA clock.
-	// 07. Use clear signal names.
-	// 08. Avoid clever code that is hard to debug.
-	// 09. Keep decoder logic combinational.
-	// 10. Preserve known-good behavior when adding features.
-	// ========================================================
+    // ========================================================
+    // PROJECT:
+    //     6502 FPGA Address Decoder
+    //
+    // AUTHOR:
+    //     Stanley Benoit 2026
+    //
+    // CHANGE LOG:
+    //
+    // 2026-07-02
+    // - Cleaned indentation.
+    // - Preserved known-good single-step page counter.
+    // - Auto-run switch SW4 is read and displayed, but automatic
+    //   stepping is intentionally disabled for now.
+    // - SW3 selects auto/manual mode.
+    // - Right IO button advances auto address by 4 KB pages.
+    // - Explicit wrap from F000 back to 0000.
+    //
+    // NASA / FLIGHT-READY STYLE RULES:
+    //
+    // 01. Drive every top-level output.
+    // 02. Drive every module input.
+    // 03. Use safe defaults before specific assignments.
+    // 04. Keep active-low signals clearly named with _n.
+    // 05. Test one small function at a time.
+    // 06. Do not gate the FPGA clock.
+    // 07. Use clear signal names.
+    // 08. Avoid clever code that is hard to debug.
+    // 09. Keep decoder logic combinational.
+    // 10. Preserve known-good behavior when adding features.
+    // ========================================================
 
-	sig rst
+    sig rst
 
-	sig a0
-	sig a1
-	sig a2
-	sig a3
-	sig a4
-	sig a5
-	sig a6
-	sig a7
-	sig a8
-	sig a9
-	sig a10
-	sig a11
-	sig a12
-	sig a13
-	sig a14
-	sig a15
+    sig a0
+    sig a1
+    sig a2
+    sig a3
+    sig a4
+    sig a5
+    sig a6
+    sig a7
+    sig a8
+    sig a9
+    sig a10
+    sig a11
+    sig a12
+    sig a13
+    sig a14
+    sig a15
 
-	sig auto_mode
-	sig manual_address[16]
-	sig auto_address[16]
-	sig active_address[16]
+    sig auto_mode
+    sig auto_run
+    sig manual_address[16]
+    sig auto_address[16]
+    sig active_address[16]
 
-	sig jp1_vcc_path
-	sig jp1_clk_path
-	sig decode_enable
+    sig jp1_vcc_path
+    sig jp1_clk_path
+    sig decode_enable
 
-	sig y[8]
+    sig y[8]
 
-	sig addr3[4]
-	sig addr2[4]
-	sig addr1[4]
-	sig addr0[4]
+    sig addr3[4]
+    sig addr2[4]
+    sig addr1[4]
+    sig addr0[4]
 
-	sig display_digits[4][4]
+    sig display_digits[4][4]
 
-	sig rom_cs_n
-	sig ram_cs_n
-	sig uartb_cs_n
-	sig acia_cs_n
+    sig rom_cs_n
+    sig ram_cs_n
+    sig uartb_cs_n
+    sig acia_cs_n
 
-	ls138 decoder
-	.clk(clk) {
-		reset_conditioner reset_cond
+    ls138 decoder
 
-		.rst(rst) {
-			dff slow_counter[26]
-			dff auto_counter[16]
-			dff step_button_old
+    .clk(clk) {
+        reset_conditioner reset_cond
 
-			multi_seven_seg seg (
-				#DIV($is_sim() ? 1 : 16),
-				#DIGITS(4)
-			)
-			}
-			}
+        .rst(rst) {
+            dff slow_counter[26]
+            dff auto_counter[16]
+            dff step_button_old
 
-			always {
+            multi_seven_seg seg (
+                #DIV($is_sim() ? 1 : 16),
+                #DIGITS(4)
+            )
+        }
+    }
 
-				// ====================================================
-				// RESET AND USB
-				// ====================================================
+    always {
 
-				reset_cond.in = ~rst_n
-				rst = reset_cond.out
+        // ====================================================
+        // RESET AND USB
+        // ====================================================
 
-				usb_tx = usb_rx
+        reset_cond.in = ~rst_n
+        rst = reset_cond.out
 
-				// ====================================================
-				// SAFE DEFAULT OUTPUTS
-				// ====================================================
+        usb_tx = usb_rx
 
-				led = 8h00
+        // ====================================================
+        // SAFE DEFAULT OUTPUTS
+        // ====================================================
 
-				io_led[0] = 8h00
-				io_led[1] = 8h00
-				io_led[2] = 8h00
+        led = 8h00
 
-				display_digits[0] = 4h0
-				display_digits[1] = 4h0
-				display_digits[2] = 4h0
-				display_digits[3] = 4h0
+        io_led[0] = 8h00
+        io_led[1] = 8h00
+        io_led[2] = 8h00
 
-				// ====================================================
-				// @AUTO_MODE
-				//
-				// Bank 2 SW3 selects address source.
-				//
-				// OFF = manual DIP-switch address
-				// ON  = automatic page-walk address
-				// ====================================================
+        display_digits[0] = 4h0
+        display_digits[1] = 4h0
+        display_digits[2] = 4h0
+        display_digits[3] = 4h0
 
-				auto_mode = io_dip[2][5]
+        // ====================================================
+        // @AUTO_MODE
+        //
+        // Bank 2 SW3:
+        //     OFF = manual DIP-switch address
+        //     ON  = auto address from page counter
+        //
+        // Bank 2 SW4:
+        //     Reserved for future auto-run mode.
+        //     Read and displayed, but not used to count yet.
+        // ====================================================
 
-				// ====================================================
-				// AUTO PAGE COUNTER TEST
-				//
-				// Bank 2 SW3 ON lets the FPGA walk addresses by page:
-				//
-				//     0000, 1000, 2000, ... F000
-				//
-				// The counter only advances when slow_counter rolls over.
-				// ====================================================
+        auto_mode = io_dip[2][5]
+        auto_run  = io_dip[2][4]
 
-				// ====================================================
-				// SINGLE STEP AUTO ADDRESS TEST
-				//
-				// Right IO button advances auto_counter by one 4 KB page.
-				//
-				// step_button_old.q = previous button state
-				// io_button[4]      = current button state
-				//
-				// The counter advances only on the rising edge:
-				//
-				//     old = 0
-				//     new = 1
-				//
-				// This prevents one long button hold from constantly
-				// incrementing the counter.
-				// ====================================================
+        // ====================================================
+        // SINGLE-STEP AUTO ADDRESS GENERATOR
+        //
+        // Right IO button advances auto_counter by one 4 KB page.
+        //
+        // step_button_old.q = previous button state
+        // io_button[4]      = current button state
+        //
+        // Counter advances only on rising edge:
+        //
+        //     old = 0
+        //     new = 1
+        //
+        // Page sequence:
+        //
+        //     0000, 1000, 2000, ... F000, 0000
+        //
+        // slow_counter is intentionally frozen for now because
+        // previous auto-run attempts caused display flicker.
+        // ====================================================
 
-				slow_counter.d = slow_counter.q
+        slow_counter.d = slow_counter.q
 
-				if (io_button[4] & ~step_button_old.q) {
+        if (io_button[4] & ~step_button_old.q) {
+            if (auto_counter.q == 16hF000) {
+                auto_counter.d = 16h0000
+            } else {
+                auto_counter.d = auto_counter.q + 16h1000
+            }
+        } else {
+            auto_counter.d = auto_counter.q
+        }
 
-					if (auto_counter.q == 16hF000) {
-						auto_counter.d = 16h0000
-						} else {
-							auto_counter.d = auto_counter.q + 16h1000
-							}
+        step_button_old.d = io_button[4]
 
-							} else {
-								auto_counter.d = auto_counter.q
-								}
+        auto_address = auto_counter.q
 
-								step_button_old.d = io_button[4]
+        // ====================================================
+        // @BANK0_SWITCHES
+        // BANK 0 = A15..A8
+        // ====================================================
 
-								auto_address = auto_counter.q
+        a15 = io_dip[0][7]
+        a14 = io_dip[0][6]
+        a13 = io_dip[0][5]
+        a12 = io_dip[0][4]
+        a11 = io_dip[0][3]
+        a10 = io_dip[0][2]
+        a9  = io_dip[0][1]
+        a8  = io_dip[0][0]
 
-								// ====================================================
-								// @BANK0_SWITCHES
-								// BANK 0 = A15..A8
-								// ====================================================
+        // ====================================================
+        // @BANK1_SWITCHES
+        // BANK 1 = A7..A0
+        // ====================================================
 
-								a15 = io_dip[0][7]
-								a14 = io_dip[0][6]
-								a13 = io_dip[0][5]
-								a12 = io_dip[0][4]
-								a11 = io_dip[0][3]
-								a10 = io_dip[0][2]
-								a9  = io_dip[0][1]
-								a8  = io_dip[0][0]
+        a7 = io_dip[1][7]
+        a6 = io_dip[1][6]
+        a5 = io_dip[1][5]
+        a4 = io_dip[1][4]
+        a3 = io_dip[1][3]
+        a2 = io_dip[1][2]
+        a1 = io_dip[1][1]
+        a0 = io_dip[1][0]
 
-								// ====================================================
-								// @BANK1_SWITCHES
-								// BANK 1 = A7..A0
-								// ====================================================
+        // ====================================================
+        // BUILD MANUAL ADDRESS
+        // ====================================================
 
-								a7 = io_dip[1][7]
-								a6 = io_dip[1][6]
-								a5 = io_dip[1][5]
-								a4 = io_dip[1][4]
-								a3 = io_dip[1][3]
-								a2 = io_dip[1][2]
-								a1 = io_dip[1][1]
-								a0 = io_dip[1][0]
+        manual_address = c{
+            a15, a14, a13, a12,
+            a11, a10, a9,  a8,
+            a7,  a6,  a5,  a4,
+            a3,  a2,  a1,  a0
+        }
 
-								// ====================================================
-								// BUILD MANUAL ADDRESS
-								// ====================================================
+        // ====================================================
+        // @ACTIVE_ADDRESS_SELECT
+        // ====================================================
 
-								manual_address = c{
-								a15, a14, a13, a12,
-								a11, a10, a9,  a8,
-								a7,  a6,  a5,  a4,
-								a3,  a2,  a1,  a0
-								}
+        if (auto_mode) {
+            active_address = auto_address
+        } else {
+            active_address = manual_address
+        }
 
-								// ====================================================
-								// @ACTIVE_ADDRESS_SELECT
-								// ====================================================
+        // ====================================================
+        // @JP1_ENABLE
+        //
+        // Bank 2 SW1 or SW2 enables LS138.
+        // ====================================================
 
-								if (auto_mode) {
-									active_address = auto_address
-									} else {
-										active_address = manual_address
-										}
+        jp1_vcc_path = io_dip[2][7]
+        jp1_clk_path = io_dip[2][6]
 
-										// ====================================================
-										// @JP1_ENABLE
-										// Bank 2 SW1 or SW2 enables LS138.
-										// ====================================================
+        decode_enable = jp1_vcc_path | jp1_clk_path
 
-										jp1_vcc_path = io_dip[2][7]
-										jp1_clk_path = io_dip[2][6]
+        io_led[2][7] = jp1_vcc_path
+        io_led[2][6] = jp1_clk_path
+        io_led[2][5] = auto_mode
+        io_led[2][4] = auto_run
 
-										decode_enable = jp1_vcc_path | jp1_clk_path
+        // ====================================================
+        // @LS138_WIRING
+        // ====================================================
 
-										io_led[2][7] = jp1_vcc_path
-										io_led[2][6] = jp1_clk_path
+        decoder.a = active_address[13]
+        decoder.b = active_address[14]
+        decoder.c = active_address[15]
 
-										// ====================================================
-										// @LS138_WIRING
-										// ====================================================
+        decoder.g1 = decode_enable
+        decoder.g2a_n = 0
+        decoder.g2b_n = 0
 
-										decoder.a = active_address[13]
-										decoder.b = active_address[14]
-										decoder.c = active_address[15]
+        y = decoder.y
 
-										decoder.g1 = decode_enable
-										decoder.g2a_n = 0
-										decoder.g2b_n = 0
+        // ====================================================
+        // CHIP SELECT DECODE
+        // ====================================================
 
-										y = decoder.y
+        rom_cs_n   = y[4] & y[5] & y[6] & y[7]
+        ram_cs_n   = y[0]
+        uartb_cs_n = y[2] | ~active_address[12]
+        acia_cs_n  = y[3] |  active_address[12]
 
-										// ====================================================
-										// CHIP SELECT DECODE
-										// ====================================================
+        // ====================================================
+        // @AU_LED_OUTPUTS
+        // ====================================================
 
-										rom_cs_n   = y[4] & y[5] & y[6] & y[7]
-										ram_cs_n   = y[0]
-										uartb_cs_n = y[2] | ~active_address[12]
-										acia_cs_n  = y[3] |  active_address[12]
+        led[0] = ~rom_cs_n
+        led[1] = ~ram_cs_n
+        led[2] = ~uartb_cs_n
+        led[3] = ~acia_cs_n
 
-										// ====================================================
-										// @AU_LED_OUTPUTS
-										// ====================================================
+        led[4] = auto_mode
+        led[5] = auto_run
+        led[6] = io_button[2]
+        led[7] = io_button[3]
 
-										led[0] = ~rom_cs_n
-										led[1] = ~ram_cs_n
-										led[2] = ~uartb_cs_n
-										led[3] = ~acia_cs_n
+        // ====================================================
+        // @HEX_DISPLAY
+        // ====================================================
 
-										led[4] = auto_mode   
-										led[5] = io_button[1]
-										led[6] = io_button[2]
-										led[7] = io_button[3]
+        addr3 = active_address[15:12]
+        addr2 = active_address[11:8]
+        addr1 = active_address[7:4]
+        addr0 = active_address[3:0]
 
-										// ====================================================
-										// @HEX_DISPLAY
-										// ====================================================
+        display_digits[0] = addr0
+        display_digits[1] = addr1
+        display_digits[2] = addr2
+        display_digits[3] = addr3
 
-										addr3 = active_address[15:12]
-										addr2 = active_address[11:8]
-										addr1 = active_address[7:4]
-										addr0 = active_address[3:0]
+        seg.values = display_digits
 
-										display_digits[0] = addr0
-										display_digits[1] = addr1
-										display_digits[2] = addr2
-										display_digits[3] = addr3
-
-										seg.values = display_digits
-
-										io_segment = ~seg.seg
-										io_select  = ~seg.sel
-										}
-										}
+        io_segment = ~seg.seg
+        io_select  = ~seg.sel
+    }
+}
