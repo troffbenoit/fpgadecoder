@@ -7,6 +7,8 @@ module alchitry_top (
     input usb_rx,
     output usb_tx,
 
+    output br_rom_cs_n, 
+
     output io_led[3][8],
     output io_segment[8],
     output io_select[4],
@@ -123,6 +125,7 @@ module alchitry_top (
 
         led = 8h00
 
+        br_rom_cs_n = 1
         io_led[0] = 8h00
         io_led[1] = 8h00
         io_led[2] = 8h00
@@ -268,6 +271,7 @@ module alchitry_top (
         // ====================================================
 
         rom_cs_n   = y[4] & y[5] & y[6] & y[7]
+        br_rom_cs_n = rom_cs_n
         ram_cs_n   = y[0]
         uartb_cs_n = y[2] | ~active_address[12]
         acia_cs_n  = y[3] |  active_address[12]
