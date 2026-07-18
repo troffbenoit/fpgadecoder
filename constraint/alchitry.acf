@@ -1,7 +1,17 @@
 STANDARD(LVCMOS33), SIDE(TOP) {
+    // ============================================================
+    // ALCHITRY AU V2 BUILT-IN HARDWARE
+    // ============================================================
+
+    // 100 MHz onboard system clock
     pin clk CLOCK FREQUENCY(100MHz)
 
+    // Onboard reset button - active low
     pin rst_n RESET
+
+    // ============================================================
+    // ALCHITRY AU V2 ONBOARD LEDS
+    // ============================================================
 
     pin led[0] LED0
     pin led[1] LED1
@@ -12,6 +22,21 @@ STANDARD(LVCMOS33), SIDE(TOP) {
     pin led[6] LED6
     pin led[7] LED7
 
+    // ============================================================
+    // USB SERIAL INTERFACE
+    // ============================================================
+
     pin usb_rx USB_RX
     pin usb_tx USB_TX
+
+    // ============================================================
+    // BR V2 EXTERNAL INTERFACE
+    // ============================================================
+
+    // ROM chip-select output from the FPGA address decoder.
+    // Active low: asserted (0) when the decoded address selects ROM.
+    // Au V2 Bank B connector pin 22.
+    // Intended connection: BR V2 ROM /CE.
+    // NOTE: Hardware connection not yet tested.
+    pin br_rom_cs_n B22
 }
