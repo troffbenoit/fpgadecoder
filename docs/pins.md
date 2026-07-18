@@ -6,5 +6,5 @@
 |--------------|----------------|-----------|--------------|--------------|--------|
 | ROM_CS_N     | br_rom_cs_n    | B22       | TBD          | ROM /CE      | No     |
 | RAM_CS_N     | br_ram_cs_n    | B24       | TBD          | SRAM /CE     | No     |
-| UARTB_CS_N   | br_uartb_cs_n  | TBD       | TBD          | UARTB /CS    | No     |
+| UARTB_CS_N   | br_uartb_cs_n  | B28       | TBD          | UARTB /CS    | No     |
 | ACIA_CS_N    | br_acia_cs_n   | TBD       | TBD          | ACIA /CS     | No     |

@@ -7,8 +7,24 @@ module alchitry_top (
     input usb_rx,
     output usb_tx,
 
-    output br_rom_cs_n, 
+    // ============================================================
+    // BR V2 EXTERNAL CHIP-SELECT OUTPUTS
+    //
+    // These active-low outputs expose the FPGA address decoder
+    // chip-select signals to physical Au V2 connector pins.
+    //
+    // Physical pin assignments are defined in:
+    //     constraint/alchitry.acf
+    //
+    // Hardware mapping is documented in:
+    //     docs/pins.md
+    //
+    // NOTE: External BR V2 hardware connections have not yet
+    //       been physically tested.
+    // ============================================================
+    output br_rom_cs_n,
     output br_ram_cs_n,
+    output br_uartb_cs_n,
 
     output io_led[3][8],
     output io_segment[8],
@@ -34,6 +50,12 @@ module alchitry_top (
     // - SW3 selects auto/manual mode.
     // - Right IO button advances auto address by 4 KB pages.
     // - Explicit wrap from F000 back to 0000.
+    //
+    // 2026-07-18
+    // - Exposed ROM chip-select as br_rom_cs_n.
+    // - Exposed RAM chip-select as br_ram_cs_n.
+    // - Exposed UARTB chip-select as br_uartb_cs_n.
+    // - Added safe inactive defaults for BR V2 outputs.
     //
     // NASA / FLIGHT-READY STYLE RULES:
     //
@@ -87,6 +109,10 @@ module alchitry_top (
 
     sig display_digits[4][4]
 
+    // ========================================================
+    // INTERNAL ACTIVE-LOW CHIP-SELECT SIGNALS
+    // ========================================================
+
     sig rom_cs_n
     sig ram_cs_n
     sig uartb_cs_n
@@ -122,12 +148,18 @@ module alchitry_top (
 
         // ====================================================
         // SAFE DEFAULT OUTPUTS
+        //
+        // All externally exposed active-low BR V2 chip-select
+        // outputs default HIGH (inactive). Specific decoder
+        // values are assigned later in CHIP SELECT DECODE.
         // ====================================================
 
         led = 8h00
 
-        br_rom_cs_n = 1
-        br_ram_cs_n = 1
+        br_rom_cs_n   = 1
+        br_ram_cs_n   = 1
+        br_uartb_cs_n = 1
+
         io_led[0] = 8h00
         io_led[1] = 8h00
         io_led[2] = 8h00
@@ -262,7 +294,7 @@ module alchitry_top (
         decoder.b = active_address[14]
         decoder.c = active_address[15]
 
-        decoder.g1 = decode_enable
+        decoder.g1    = decode_enable
         decoder.g2a_n = 0
         decoder.g2b_n = 0
 
@@ -270,17 +302,47 @@ module alchitry_top (
 
         // ====================================================
         // CHIP SELECT DECODE
+        //
+        // Internal chip-select signals are generated from the
+        // LS138 decode outputs and address bit A12.
+        //
+        // Active-low external BR V2 outputs mirror the internal
+        // decoded chip-select signals.
+        //
+        // ROM:
+        //     Selected for decoded upper address regions Y4-Y7.
+        //
+        // RAM:
+        //     Selected directly by LS138 output Y0.
+        //
+        // UARTB:
+        //     Uses Y2 with A12 to select the lower half of the
+        //     decoded region.
+        //
+        // ACIA:
+        //     Uses Y3 with A12 to select the upper half of the
+        //     decoded region.
+        //
+        // NOTE:
+        //     ACIA is currently used internally for LED testing
+        //     only. A BR V2 external ACIA output will be added
+        //     separately.
         // ====================================================
 
-        rom_cs_n   = y[4] & y[5] & y[6] & y[7]
-        br_rom_cs_n = rom_cs_n
-        ram_cs_n   = y[0]
-        br_ram_cs_n = ram_cs_n
-        uartb_cs_n = y[2] | ~active_address[12]
-        acia_cs_n  = y[3] |  active_address[12]
+        rom_cs_n       = y[4] & y[5] & y[6] & y[7]
+        ram_cs_n       = y[0]
+        uartb_cs_n     = y[2] | ~active_address[12]
+        acia_cs_n      = y[3] |  active_address[12]
+
+        br_rom_cs_n    = rom_cs_n
+        br_ram_cs_n    = ram_cs_n
+        br_uartb_cs_n  = uartb_cs_n
 
         // ====================================================
         // @AU_LED_OUTPUTS
+        //
+        // LEDs 0-3 provide visible active-high indications of
+        // the corresponding active-low chip-select signals.
         // ====================================================
 
         led[0] = ~rom_cs_n
