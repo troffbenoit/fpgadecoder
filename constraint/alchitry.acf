@@ -38,5 +38,14 @@ STANDARD(LVCMOS33), SIDE(TOP) {
     // Au V2 Bank B connector pin 22.
     // Intended connection: BR V2 ROM /CE.
     // NOTE: Hardware connection not yet tested.
+
     pin br_rom_cs_n B22
+
+    // RAM chip-select output from the FPGA address decoder.
+    // Active low: asserted (0) when the decoded address selects RAM.
+    // Au V2 Bank B connector pin 24.
+    // Intended connection: BR V2 SRAM /CE.
+    // NOTE: Hardware connection not yet tested.
+
+    pin br_ram_cs_n B24
 }
