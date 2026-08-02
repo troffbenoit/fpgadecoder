@@ -8,11 +8,14 @@
  * MODULE:
  *     uart_tx
  *
- * PURPOSE:
- *     Simple UART transmitter for the Alchitry Au FPGA.
+ * AUTHOR:
+ *     Stanley Benoit
  *
- *     This module accepts one 8-bit byte and transmits it using a standard
- *     UART frame:
+ * PURPOSE:
+ *     Simple, explicit UART transmitter for the Alchitry Au FPGA.
+ *
+ *     This module accepts one 8-bit byte and serializes it using a standard
+ *     UART 8N1 frame:
  *
  *         1 start bit
  *         8 data bits
@@ -23,448 +26,750 @@
  *         FPGA clock = 100 MHz
  *         UART baud  = 115200
  *
- *     The transmitter is intentionally kept simple and explicit so that each
- *     internal state can be inspected and understood.
- *
- * UART FRAME:
- *
- *          idle      start      data bits, LSB first          stop      idle
- *
- *     TX:   1   --->   0   ---> D0 D1 D2 D3 D4 D5 D6 D7 --->  1   --->  1
+ *     The transmitter is intentionally implemented with a small number of
+ *     registers and very direct control logic so each piece of hardware can
+ *     be understood, simulated, and verified on the bench.
  *
  *
- * NASA/JPL POWER-OF-TEN-INSPIRED DESIGN RULES:
+ * UART 8N1 FRAME:
  *
- *     Rule 1: Simple control flow.
- *             - No recursion.
- *             - No complex nested state machinery.
- *             - Transmission proceeds through a simple bounded sequence.
+ *          idle      start          data bits, LSB first           stop    idle
  *
- *     Rule 2: All loops or counters are bounded.
- *             - clock_counter has a fixed width.
- *             - bit_index has a fixed width.
- *             - UART frame length is fixed at 10 bits.
+ *     TX:    1   --->  0   ---> D0 D1 D2 D3 D4 D5 D6 D7 --->       1 --->  1
  *
- *     Rule 3: No dynamic memory.
- *             - FPGA storage is entirely static flip-flop state.
  *
- *     Rule 4: Keep logic small and understandable.
- *             - Timing, frame storage, bit selection, and transmit status
- *               each use dedicated registers.
+ * SIGNAL POLARITY:
  *
- *     Rule 5: Defensive design.
- *             - Outputs receive safe defaults.
- *             - Registers retain their current values unless explicitly
- *               changed.
+ *     UART idle level = HIGH.
  *
- *     Rule 6: Declare state clearly.
- *             - Each dff has one clear purpose.
+ *     Start bit       = LOW.
  *
- *     Rule 7: Explicit state transitions.
- *             - .d values are assigned intentionally.
+ *     Stop bit        = HIGH.
  *
- *     Rule 8: Limit constants and magic numbers.
- *             - Baud timing is derived from CLK_FREQ and BAUD.
  *
- *     Rule 9: Keep signal relationships simple.
- *             - No unnecessary pointer-like or indirect constructs.
+ * DESIGN INTENT:
  *
- *     Rule 10: Verify with strict checks.
- *              - Project should pass:
+ *     This module is designed as a teaching/reference implementation.
  *
- *                    make check
+ *     The comments explain:
  *
- *              before:
+ *         - what each register represents,
+ *         - why each register exists,
+ *         - how the baud timing is derived,
+ *         - how the UART frame is assembled,
+ *         - how the frame bit index advances,
+ *         - why the line idles HIGH,
+ *         - and what should be visible on an oscilloscope or serial terminal.
  *
- *                    make build
+ *
+ * NASA/JPL POWER-OF-TEN-INSPIRED HDL RULES:
+ *
+ *     The original "Power of Ten" rules were written for safety-critical
+ *     software, not FPGA HDL. The following principles are adapted to this
+ *     hardware design rather than applied literally.
+ *
+ *     RULE 01 - KEEP CONTROL FLOW SIMPLE AND BOUNDED
+ *
+ *         The transmitter follows one fixed path:
+ *
+ *             IDLE -> START -> DATA0..DATA7 -> STOP -> IDLE
+ *
+ *         There is no recursion, unbounded iteration, or hidden state machine.
+ *
+ *     RULE 02 - BOUND EVERY COUNTER AND INDEX
+ *
+ *         clock_counter counts only within one UART bit period.
+ *
+ *         bit_index is intentionally constrained by control logic to values
+ *         0 through 9, corresponding to the ten bits of an 8N1 frame.
+ *
+ *     RULE 03 - USE STATIC HARDWARE STATE ONLY
+ *
+ *         All storage is implemented with explicit Lucid dff objects.
+ *
+ *         There is no dynamic allocation or run-time memory creation.
+ *
+ *     RULE 04 - KEEP FUNCTIONS SMALL AND UNDERSTANDABLE
+ *
+ *         Timing, frame storage, bit selection, and transmit-status functions
+ *         each have separate state registers.
+ *
+ *     RULE 05 - USE SAFE DEFAULTS
+ *
+ *         tx defaults HIGH because HIGH is the valid UART idle state.
+ *
+ *         Every DFF receives an explicit hold assignment before conditional
+ *         logic overrides its next value.
+ *
+ *     RULE 06 - MAKE STATE EXPLICIT
+ *
+ *         register.q means PRESENT stored state.
+ *
+ *         register.d means NEXT state to be stored on the next clock edge.
+ *
+ *     RULE 07 - MAKE STATE TRANSITIONS EXPLICIT
+ *
+ *         A new transmission is accepted only when:
+ *
+ *             start == 1
+ *             transmitting.q == 0
+ *
+ *         End-of-frame handling explicitly recognizes bit index 9.
+ *
+ *     RULE 08 - AVOID MAGIC TIMING NUMBERS
+ *
+ *         UART timing is derived from CLK_FREQ and BAUD:
+ *
+ *             CLKS_PER_BIT = CLK_FREQ / BAUD
+ *
+ *         This keeps the module reusable for different clock frequencies or
+ *         baud rates.
+ *
+ *     RULE 09 - KEEP SIGNAL RELATIONSHIPS DIRECT
+ *
+ *         The current bit index directly selects one bit from the stored
+ *         10-bit frame:
+ *
+ *             tx = frame.q[bit_index.q]
+ *
+ *         There is no unnecessary indirection.
+ *
+ *     RULE 10 - VERIFY IN STAGES
+ *
+ *         Recommended project workflow:
+ *
+ *             make check
+ *             make build
+ *             make load
+ *             hardware test
+ *
+ *         A Git checkpoint should be created only after the new behavior is
+ *         verified.
+ *
+ *
+ * CHANGE LOG:
+ *
+ *     2026-08-01
+ *       - Added uart_tx module to the 6502 FPGA decoder project.
+ *       - Implemented UART 8N1 transmit framing.
+ *       - Implemented 115200-baud timing from a 100 MHz FPGA clock.
+ *       - Added explicit busy output.
+ *       - Added transmit frame register, baud counter, frame-bit index,
+ *         and transmitting-state DFF.
+ *       - Hardware-verified transmission of ASCII 'A' through the board
+ *         USB/FTDI interface to Linux serial terminal.
+ *
+ *     2026-08-02
+ *       - Performed documentation and maintainability review.
+ *       - Added detailed educational comments for baud generation, frame
+ *         storage, state registers, bit timing, and output behavior.
+ *       - Expanded Power-of-Ten-inspired FPGA design notes.
+ *       - Documented integer baud-rate division and resulting baud error.
+ *       - Documented register-width reasoning and bounded bit-index behavior.
+ *       - Preserved functional behavior; no intentional logic change.
  *
  ******************************************************************************/
 
 module uart_tx #(
 
+    /**************************************************************************
+     * MODULE PARAMETERS
+     **************************************************************************/
+
     /*
-     * FPGA input clock frequency.
+     * CLK_FREQ
+     * --------
+     * Frequency of the FPGA clock that drives this module.
      *
-     * The Alchitry Au normally runs from a 100 MHz system clock.
+     * The Alchitry Au V2 normally supplies:
      *
-     * This value is a module parameter rather than a hard-coded internal
-     * constant so the UART module can be reused with a different FPGA clock.
+     *     100 MHz
+     *
+     * which means one system-clock period is:
+     *
+     *     1 / 100,000,000 second
+     *
+     *     = 10 nanoseconds
+     *
+     * Keeping this value as a parameter instead of hard-coding it inside the
+     * timing logic allows the same UART module to be reused with another FPGA
+     * clock frequency.
      */
     CLK_FREQ = 100_000_000,
 
     /*
-     * UART bit rate.
+     * BAUD
+     * ----
+     * Desired UART bit rate.
      *
-     * 115200 baud means one UART bit is transmitted every:
+     * 115200 baud means:
      *
-     *     1 / 115200 seconds
+     *     115,200 UART bits per second
      *
-     * or approximately:
+     * Therefore the ideal duration of one UART bit is:
      *
-     *     8.68 microseconds per bit
+     *     1 / 115,200
+     *
+     *     ~= 8.6806 microseconds
+     *
+     * An 8N1 frame contains ten total bit periods, so one complete byte frame
+     * takes approximately:
+     *
+     *     10 * 8.6806 us
+     *
+     *     ~= 86.806 us
+     *
+     * ignoring any additional idle time between characters.
      */
     BAUD = 115_200
 
 )(
 
+    /**************************************************************************
+     * MODULE INPUTS
+     **************************************************************************/
+
     /*
+     * clk
+     * ---
      * Main FPGA clock.
      *
-     * All sequential UART state changes are synchronized to this clock.
+     * Every sequential state transition in this UART transmitter occurs on
+     * this clock.
      */
     input clk,
 
     /*
-     * UART reset.
+     * rst
+     * ---
+     * Active-high reset input for the UART state registers.
      *
-     * When asserted, the UART should return to a known idle condition.
+     * When reset is asserted, Lucid's resettable DFFs return to their reset
+     * value, which is zero unless otherwise specified.
+     *
+     * With transmitting reset to zero, the combinational output logic drives
+     * tx HIGH, returning the UART line to its proper idle state.
      */
     input rst,
 
     /*
-     * Start-transmission command.
+     * start
+     * -----
+     * Request to begin transmitting the byte currently present on data.
      *
-     * The top-level module asserts this signal when it wants uart_tx to
-     * begin transmitting the byte currently present on data[8].
+     * The request is accepted only if the transmitter is idle:
      *
-     * This should normally be asserted only when busy == 0.
+     *     start == 1
+     *     transmitting.q == 0
+     *
+     * If start remains HIGH while the transmitter is busy, it is ignored until
+     * the current frame is complete.
+     *
+     * In the current top-level project, start is generated as a one-clock
+     * rising-edge pulse from an IO pushbutton.
      */
     input start,
 
     /*
-     * Byte to transmit.
+     * data[8]
+     * -------
+     * Eight-bit byte to transmit.
      *
-     * data[8] represents:
+     * Lucid data[8] means an eight-bit signal containing:
      *
      *     data[7:0]
      *
-     * UART normally sends the least-significant bit first.
+     * UART sends the LEAST-SIGNIFICANT BIT first:
+     *
+     *     D0, D1, D2, D3, D4, D5, D6, D7
      */
     input data[8],
 
+
+    /**************************************************************************
+     * MODULE OUTPUTS
+     **************************************************************************/
+
     /*
-     * Physical UART transmit output.
+     * tx
+     * --
+     * Serial UART transmit output.
      *
-     * UART idles HIGH.
+     * Electrical/logical behavior:
      *
-     * During transmission this output will contain:
+     *     idle        = 1
+     *     start bit   = 0
+     *     data bits   = D0 through D7
+     *     stop bit    = 1
      *
-     *     start bit
-     *     data bit 0
-     *     data bit 1
-     *     ...
-     *     data bit 7
-     *     stop bit
+     * During idle, this module explicitly drives tx HIGH.
      */
     output tx,
 
     /*
-     * Transmitter status.
+     * busy
+     * ----
+     * Indicates whether a UART frame is currently being transmitted.
      *
-     * busy = 0
-     *     UART is idle and may accept another byte.
+     *     busy = 0
+     *         Transmitter is idle and can accept a new start request.
      *
-     * busy = 1
-     *     UART is currently transmitting.
+     *     busy = 1
+     *         Transmitter is currently sending a frame.
+     *
+     * busy directly mirrors transmitting.q.
      */
     output busy
 ) {
 
+
     /**************************************************************************
-     * BAUD-RATE TIMING CONSTANT
+     * BAUD-RATE TIMING CONSTANTS
      **************************************************************************/
 
     /*
-     * Calculate how many FPGA clock cycles correspond to one UART bit.
+     * CLKS_PER_BIT
+     * ------------
+     * Number of FPGA system-clock periods used for ONE UART bit.
      *
-     * With:
+     * Formula:
      *
-     *     CLK_FREQ = 100,000,000 Hz
-     *     BAUD     =     115,200 bits/sec
+     *     CLKS_PER_BIT = CLK_FREQ / BAUD
      *
-     * we obtain approximately:
+     * With the default values:
      *
      *     100,000,000 / 115,200
      *
-     *     ~= 868 clock cycles per UART bit
+     * Integer division produces:
      *
-     * Therefore each UART output bit remains stable for roughly 868 cycles
-     * of the 100 MHz FPGA clock.
+     *     CLKS_PER_BIT = 868
      *
-     * This is how the fast FPGA clock is divided down to UART timing.
+     * Each UART bit is therefore held for:
+     *
+     *     868 * 10 ns
+     *
+     *     = 8.680 us
+     *
+     * The resulting actual baud rate is:
+     *
+     *     100,000,000 / 868
+     *
+     *     ~= 115,207.37 baud
+     *
+     * Baud error relative to the requested 115,200 baud is approximately:
+     *
+     *     +0.0064%
+     *
+     * This is extremely small and comfortably within normal asynchronous UART
+     * tolerance.
+     *
+     * IMPORTANT:
+     *
+     * This counter does NOT divide the FPGA clock into a new clock signal.
+     *
+     * The 100 MHz FPGA clock continues to drive all DFFs directly.
+     * The counter simply creates a CLOCK ENABLE EVENT every 868 clocks.
+     *
+     * This follows good FPGA practice: do not create/gate internal clocks when
+     * a counter/enable can perform the timing function.
      */
     const CLKS_PER_BIT = CLK_FREQ / BAUD
 
     /*
-     * Minimum number of bits required to count from 0 through
-     * CLKS_PER_BIT - 1. The conditional guarantees at least one bit.
+     * CLOCK_COUNTER_WIDTH
+     * -------------------
+     * Minimum number of flip-flop bits required to represent values from:
+     *
+     *     0
+     *
+     * through:
+     *
+     *     CLKS_PER_BIT - 1
+     *
+     * For CLKS_PER_BIT = 868:
+     *
+     *     $clog2(868) = 10
+     *
+     * because:
+     *
+     *     2^9  = 512   -> too small
+     *     2^10 = 1024  -> sufficient
+     *
+     * The conditional guarantees that the counter width is never zero if a
+     * very unusual configuration makes CLKS_PER_BIT equal to one.
      */
     const CLOCK_COUNTER_WIDTH = CLKS_PER_BIT > 1 ? $clog2(CLKS_PER_BIT) : 1
 
 
     /**************************************************************************
-     * UART STATE REGISTERS
+     * CLOCKED UART STATE
      *
-     * Lucid dff objects represent actual clocked state storage.
-     *
-     * Important:
+     * Lucid DFF notation:
      *
      *     register.q
-     *
-     *         Current value stored in the flip-flop.
+     *         PRESENT value currently stored in hardware.
      *
      *     register.d
+     *         NEXT value that will be captured on the next active clk edge.
      *
-     *         Value that will be stored at the next active clock edge.
-     *
+     * All four state registers below use the same FPGA clock and reset.
      **************************************************************************/
 
-    /*
-     * Counts FPGA clocks within one UART bit period.
-     *
-     * Width:
-     *
-     *     CLOCK_COUNTER_WIDTH bits
-     *
-     * The width is derived from CLKS_PER_BIT, so changing the baud rate does
-     * not require manually resizing this counter.
-     */
     .clk(clk), .rst(rst) {
+
+        /*
+         * clock_counter
+         * -------------
+         * BAUD-TIMING COUNTER.
+         *
+         * Purpose:
+         *
+         *     Measure how long the CURRENT UART output bit has been present.
+         *
+         * Sequence at the default baud:
+         *
+         *     0, 1, 2, ... 866, 867
+         *
+         * When:
+         *
+         *     clock_counter.q == CLKS_PER_BIT - 1
+         *
+         * the current UART bit has been held for one complete bit period.
+         *
+         * At that point:
+         *
+         *     - the counter returns to zero,
+         *     - and bit_index advances to the next frame bit.
+         *
+         * This register is NOT a general-purpose free-running divider.
+         * It measures elapsed system clocks WITHIN the current UART bit.
+         */
         dff clock_counter[CLOCK_COUNTER_WIDTH]
 
-
-    /*
-     * Identifies which bit of the UART frame is currently being transmitted.
-     *
-     * A normal 8N1 UART frame contains 10 bits total:
-     *
-     *     index 0 = start bit
-     *     index 1 = data bit 0
-     *     index 2 = data bit 1
-     *     index 3 = data bit 2
-     *     index 4 = data bit 3
-     *     index 5 = data bit 4
-     *     index 6 = data bit 5
-     *     index 7 = data bit 6
-     *     index 8 = data bit 7
-     *     index 9 = stop bit
-     *
-     * A 4-bit register provides values 0 through 15, which is sufficient.
-     */
+        /*
+         * bit_index
+         * ---------
+         * Identifies which one of the ten UART frame bits is currently active.
+         *
+         * Meaning of each valid value:
+         *
+         *     0 = start bit
+         *     1 = data bit D0
+         *     2 = data bit D1
+         *     3 = data bit D2
+         *     4 = data bit D3
+         *     5 = data bit D4
+         *     6 = data bit D5
+         *     7 = data bit D6
+         *     8 = data bit D7
+         *     9 = stop bit
+         *
+         * Four physical bits are allocated because four bits can represent
+         * values 0 through 15.
+         *
+         * The register COULD mathematically hold 10 through 15, but the control
+         * logic never intentionally allows that:
+         *
+         *     - transmission begins at index 0,
+         *     - indexes 0 through 8 increment by one,
+         *     - index 9 ends the frame and resets the index to zero.
+         *
+         * Therefore frame.q[bit_index.q] is bounded to the valid frame range
+         * during normal operation.
+         */
         dff bit_index[4]
 
-
-    /*
-     * Stores the complete 10-bit UART frame.
-     *
-     * The frame will eventually contain:
-     *
-     *     start + 8 data bits + stop
-     *
-     * Keeping the complete frame in one register makes transmission simple:
-     * bit_index selects which bit is driven onto tx.
-     */
+        /*
+         * frame[10]
+         * ---------
+         * Stores the complete UART 8N1 frame before transmission begins.
+         *
+         * The ten stored bits are:
+         *
+         *     frame[0] = start bit = 0
+         *     frame[1] = data D0
+         *     frame[2] = data D1
+         *     frame[3] = data D2
+         *     frame[4] = data D3
+         *     frame[5] = data D4
+         *     frame[6] = data D5
+         *     frame[7] = data D6
+         *     frame[8] = data D7
+         *     frame[9] = stop bit  = 1
+         *
+         * Capturing the complete frame at the start of a transaction has an
+         * important advantage:
+         *
+         *     The external data input may change after transmission begins,
+         *     but the byte already being transmitted remains unchanged because
+         *     its ten-bit frame has been copied into this register.
+         */
         dff frame[10]
 
-
-    /*
-     * Single-bit transmit-state flag.
-     *
-     * transmitting.q = 0
-     *     UART is idle.
-     *
-     * transmitting.q = 1
-     *     UART is currently sending a frame.
-     *
-     * Because no width is specified, this is one flip-flop.
-     */
+        /*
+         * transmitting
+         * ------------
+         * One-bit transmitter state flag.
+         *
+         *     transmitting.q = 0
+         *         UART is IDLE.
+         *
+         *     transmitting.q = 1
+         *         UART is actively transmitting one stored frame.
+         *
+         * This single flag acts as the minimal "state machine" for the module.
+         *
+         * The detailed position inside the transmission is represented by
+         * bit_index rather than a large enumerated state machine.
+         */
         dff transmitting
     }
 
 
     /**************************************************************************
-     * COMBINATIONAL LOGIC
+     * COMBINATIONAL OUTPUT AND NEXT-STATE LOGIC
      **************************************************************************/
 
     always {
 
+        /**********************************************************************
+         * SAFE UART OUTPUT DEFAULT
+         **********************************************************************/
+
         /*
-         * SAFE DEFAULT OUTPUT
+         * UART idle state is HIGH.
          *
-         * UART lines idle HIGH.
+         * Always assign the safe idle value first.
          *
-         * This assignment guarantees that tx has a defined safe state even
-         * before the later transmit logic overrides it.
+         * When transmitting.q is asserted later in this block, the selected
+         * frame bit overrides this default.
          *
-         * NASA-style principle:
+         * Therefore:
          *
-         *     Assign safe defaults before special-case behavior.
+         *     not transmitting -> tx = 1
+         *     transmitting     -> tx = selected frame bit
          */
         tx = 1
 
 
+        /**********************************************************************
+         * EXTERNAL BUSY STATUS
+         **********************************************************************/
+
         /*
-         * External busy status directly reflects the current transmit state.
+         * busy is not separately registered.
          *
-         * transmitting.q is the value currently stored in the flip-flop.
-         *
-         * Therefore:
-         *
-         *     transmitting.q = 0  -> busy = 0
-         *     transmitting.q = 1  -> busy = 1
+         * It is a direct combinational view of the stored transmitting flag.
          */
         busy = transmitting.q
 
 
         /**********************************************************************
-         * DEFAULT NEXT-STATE ASSIGNMENTS
+         * DEFAULT NEXT-STATE / HOLD ASSIGNMENTS
          *
-         * These assignments mean:
+         * Each DFF is told to keep its present value unless later logic in
+         * this always block intentionally changes it.
          *
-         *     "Keep the current value unless later logic deliberately
-         *      changes it."
-         *
-         * This is a very important FPGA design pattern.
-         *
-         * Example:
-         *
-         *     clock_counter.d = clock_counter.q
-         *
-         * means:
-         *
-         *     current value = 357
-         *
-         *     next value    = 357
-         *
-         * therefore the register does not change on the next clock.
-         *
-         * Later conditions can override these defaults.
+         * This coding pattern makes the next-state behavior explicit and
+         * prevents accidental incomplete state assignments.
          **********************************************************************/
 
         /*
-         * Hold current baud-rate counter value.
+         * Hold elapsed-clock count for current UART bit.
          */
         clock_counter.d = clock_counter.q
 
-
         /*
-         * Hold current UART frame-bit position.
+         * Hold present frame-bit position.
          */
         bit_index.d = bit_index.q
 
-
         /*
-         * Hold current UART frame contents.
+         * Hold captured ten-bit UART frame.
          */
         frame.d = frame.q
 
-
         /*
-         * Hold current transmitting/idle status.
+         * Hold transmitter IDLE/BUSY state.
          */
         transmitting.d = transmitting.q
 
 
+        /**********************************************************************
+         * ACCEPT A NEW TRANSMISSION REQUEST
+         **********************************************************************/
+
         /*
-         * START A NEW UART TRANSMISSION
-         *
-         * A new byte may only be accepted when the transmitter is idle.
-         *
-         * Conditions:
+         * A new byte is captured only when:
          *
          *     start == 1
-         *         The top-level logic is requesting a transmission.
+         *
+         * AND
          *
          *     transmitting.q == 0
-         *         The UART is currently idle.
          *
-         * When both conditions are true:
-         *
-         *     1. Mark the transmitter busy.
-         *     2. Reset the baud-rate clock counter.
-         *     3. Reset the frame bit index.
-         *     4. Capture the complete 10-bit UART frame.
-         *
-         * UART 8N1 frame:
-         *
-         *     start bit = 0
-         *     data bits = data[7:0]
-         *     stop bit  = 1
-         *
-         * UART sends the least-significant data bit first.
+         * The second condition prevents the frame register from being
+         * overwritten while a previous byte is still being transmitted.
          */
         if (start && !transmitting.q) {
+
+            /*
+             * Mark transmitter active.
+             *
+             * busy will become HIGH because busy mirrors transmitting.q.
+             */
             transmitting.d = 1
+
+            /*
+             * Begin timing the start bit from the beginning of its period.
+             */
             clock_counter.d = 0
+
+            /*
+             * UART frame transmission always begins at frame index zero,
+             * which is the start bit.
+             */
             bit_index.d = 0
+
+            /*
+             * Capture the complete UART 8N1 frame.
+             *
+             * c{1, data, 0} concatenates:
+             *
+             *     most-significant side: stop bit = 1
+             *     middle:               data[7:0]
+             *     least-significant:    start bit = 0
+             *
+             * Because transmission begins at frame[0] and increments upward,
+             * the physical order sent on tx becomes:
+             *
+             *     frame[0] -> 0       start bit
+             *     frame[1] -> data[0]
+             *     frame[2] -> data[1]
+             *       ...
+             *     frame[8] -> data[7]
+             *     frame[9] -> 1       stop bit
+             *
+             * This is exactly the UART-required least-significant-data-bit
+             * first order.
+             */
             frame.d = c{1, data, 0}
         }
 
+
+        /**********************************************************************
+         * TRANSMIT THE ACTIVE FRAME
+         **********************************************************************/
+
         /*
-         * TRANSMIT ACTIVE UART FRAME
+         * The following block executes only while a frame is active.
          *
-         * While transmitting.q is asserted, drive the selected frame bit
-         * onto the UART tx output.
+         * While idle:
          *
-         * bit_index.q selects one of the ten frame bits:
-         *
-         *     0 = start bit
-         *     1 = data bit 0
-         *     2 = data bit 1
-         *     3 = data bit 2
-         *     4 = data bit 3
-         *     5 = data bit 4
-         *     6 = data bit 5
-         *     7 = data bit 6
-         *     8 = data bit 7
-         *     9 = stop bit
+         *     tx remains at its safe default HIGH value.
          */
         if (transmitting.q) {
 
             /*
-             * Drive the current UART frame bit onto the physical tx output.
+             * Select one of the ten stored frame bits and place it directly on
+             * the UART output.
+             *
+             * This is effectively a 10-to-1 multiplexer controlled by
+             * bit_index.q.
              */
             tx = frame.q[bit_index.q]
 
+
+            /******************************************************************
+             * BAUD-PERIOD COMPLETION TEST
+             ******************************************************************/
+
             /*
-             * Hold each UART bit for CLKS_PER_BIT FPGA clock cycles.
+             * Has the selected UART bit been held for the full programmed
+             * number of system-clock periods?
+             *
+             * With default settings, the terminal value is:
+             *
+             *     868 - 1 = 867
+             *
+             * Counting:
+             *
+             *     0 through 867
+             *
+             * gives 868 total 100 MHz clocks.
              */
             if (clock_counter.q == CLKS_PER_BIT - 1) {
 
                 /*
                  * Current UART bit period is complete.
-                 * Begin timing the next bit from zero.
+                 *
+                 * Start timing the next frame bit from zero.
                  */
                 clock_counter.d = 0
 
+
+                /**************************************************************
+                 * STOP-BIT / END-OF-FRAME TEST
+                 **************************************************************/
+
                 /*
-                 * Bit index 9 is the stop bit.
+                 * Frame index 9 is the stop bit.
                  *
-                 * Once it has been held for a complete UART bit period,
-                 * transmission is finished.
+                 * Do not finish the transaction merely when index 9 is reached.
+                 * The stop bit must first remain on tx for a COMPLETE UART bit
+                 * period.
+                 *
+                 * This test occurs only after the baud counter reaches its
+                 * terminal count, so the full stop-bit duration is guaranteed.
                  */
                 if (bit_index.q == 9) {
+
+                    /*
+                     * The complete ten-bit frame has now been transmitted.
+                     *
+                     * Return the transmitter to idle.
+                     */
                     transmitting.d = 0
+
+                    /*
+                     * Return the frame index to a known safe value.
+                     *
+                     * On the following combinational evaluation, tx returns to
+                     * the default HIGH idle level because transmitting.q will
+                     * become zero after the clock edge.
+                     */
                     bit_index.d = 0
+
                 } else {
 
                     /*
-                     * Move to the next bit in the stored UART frame.
+                     * The current frame bit is complete, but this was not yet
+                     * the stop bit.
+                     *
+                     * Advance exactly one position:
+                     *
+                     *     start -> D0 -> D1 -> ... -> D7 -> stop
                      */
                     bit_index.d = bit_index.q + 1
                 }
 
             } else {
 
+                /**************************************************************
+                 * CURRENT UART BIT IS STILL IN PROGRESS
+                 **************************************************************/
+
                 /*
-                 * The current bit period is not finished yet.
+                 * Keep transmitting the same frame bit.
                  *
-                 * Stay on the same frame bit and advance the timing counter
-                 * by one 100 MHz FPGA clock.
+                 * bit_index.d already defaults to bit_index.q, so no explicit
+                 * assignment is needed here.
+                 *
+                 * Advance the timing counter by exactly one 100 MHz system
+                 * clock.
                  */
                 clock_counter.d = clock_counter.q + 1
             }
         }
     }
 }
-

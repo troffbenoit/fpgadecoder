@@ -12,7 +12,6 @@ STANDARD(LVCMOS33), SIDE(TOP) {
     pin led[6] LED6
     pin led[7] LED7
 
-    pin usb_rx USB_RX
     pin usb_tx USB_TX
 
     pin br2_test B41

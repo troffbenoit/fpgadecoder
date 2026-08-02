@@ -142,7 +142,6 @@ module alchitry_top (
      * It is intentionally not used yet because the present UART development
      * milestone implements transmit-only operation.
      */
-    input usb_rx,
 
     /*
      * USB UART transmit signal to the board's USB/FTDI interface.
@@ -642,7 +641,6 @@ module alchitry_top (
          * Internal reset distributed to the .rst(rst) scope.
          */
         rst = reset_cond.out
-
 
         /**********************************************************************
          * UART TRANSMIT-ONLY HARDWARE TEST
