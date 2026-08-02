@@ -16,4 +16,5 @@ STANDARD(LVCMOS33), SIDE(TOP) {
     pin usb_tx USB_TX
 
     pin br2_test B41
+    pin br2_probe2 B42
 }
