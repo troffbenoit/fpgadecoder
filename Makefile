@@ -19,7 +19,8 @@ build:
 	alchitry build $(PROJECT)
 
 load:
-	alchitry load $(PROJECT)
+
+	alchitry load --project $(PROJECT) --flash
 
 list:
 	alchitry sim $(PROJECT) --list

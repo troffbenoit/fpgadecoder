@@ -6,6 +6,7 @@ module alchitry_top (
 
     input usb_rx,
     output usb_tx,
+    output br2_test,
 
     output io_led[3][8],
     output io_segment[8],
@@ -98,6 +99,12 @@ module alchitry_top (
             dff slow_counter[26]
             dff auto_counter[16]
             dff step_button_old
+            dff uart_button_old
+            dff br2_counter[16]
+            dff br2_square
+
+
+            uart_tx uart
 
             multi_seven_seg seg (
                 #DIV($is_sim() ? 1 : 16),
@@ -115,7 +122,23 @@ module alchitry_top (
         reset_cond.in = ~rst_n
         rst = reset_cond.out
 
-        usb_tx = usb_rx
+        /*
+         * UART TEST
+         *
+         * io_button[0] sends one ASCII 'A' character.
+         *
+         * Rising-edge detection prevents repeated transmissions
+         * while the button is being held down.
+         */
+        uart.start = io_button[0] & ~uart_button_old.q
+        uart.data = 8h41
+
+        uart_button_old.d = io_button[0]
+
+        uart.start = io_button[0] & ~uart_button_old.q & ~uart.busy
+        uart.data = 8h41
+        uart_button_old.d = io_button[0]
+        usb_tx = uart.tx
 
         // ====================================================
         // SAFE DEFAULT OUTPUTS
@@ -169,6 +192,18 @@ module alchitry_top (
         // ====================================================
 
         slow_counter.d = slow_counter.q
+                br2_counter.d = br2_counter.q
+        br2_square.d = br2_square.q
+
+        if (br2_counter.q == 16d49999) {
+            br2_counter.d = 0
+            br2_square.d = ~br2_square.q
+        } else {
+            br2_counter.d = br2_counter.q + 1
+        }
+
+        br2_test = br2_square.q
+
 
         if (io_button[4] & ~step_button_old.q) {
             if (auto_counter.q == 16hF000) {
