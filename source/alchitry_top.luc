@@ -811,7 +811,6 @@ module alchitry_top (
          * simultaneously on a two-channel oscilloscope.
          */
         br2_test = br2_square.q
-        br2_probe2 = br2_square.q
 
 
         /**********************************************************************
@@ -1043,6 +1042,7 @@ module alchitry_top (
          * whenever any one of these upper regions is selected.
          */
         rom_cs_n = y[4] & y[5] & y[6] & y[7]
+        br2_probe2 = rom_cs_n
 
         /*
          * RAM SELECT
