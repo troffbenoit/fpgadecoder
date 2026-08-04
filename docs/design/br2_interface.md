@@ -521,6 +521,12 @@ B42 with address 0x8000:
 
     ROM SELECTED
 
+B24:
+
+    PASS
+    RAM active-low chip select verified
+    Address 8000 = HIGH (RAM NOT SELECTED)
+    Address 0000 = LOW  (RAM SELECTED)
 
 OVERALL RESULT
 --------------

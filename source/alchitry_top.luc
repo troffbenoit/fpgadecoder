@@ -157,14 +157,16 @@ module alchitry_top (
      * It carries a 1 kHz square wave for oscilloscope and routing tests.
      */
     output br2_test,
-
     /*
-     * Second temporary Bank-B diagnostic output.
+     * BR2 ROM chip-select output.
      *
-     * It currently carries the same 1 kHz waveform as br2_test so two
-     * physical Bank-B outputs can be verified simultaneously.
+     * Active LOW:
+     *     0 = ROM selected
+     *     1 = ROM not selected
      */
+
     output br2_probe2,
+    output br_ram_cs_n,
 
     /*
      * Alchitry IO V2 LED banks.
@@ -1051,6 +1053,7 @@ module alchitry_top (
          * RAM directly follows LS138 output y[0].
          */
         ram_cs_n = y[0]
+        br_ram_cs_n = ram_cs_n
 
         /*
          * UART-B SELECT
