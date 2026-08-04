@@ -168,6 +168,7 @@ module alchitry_top (
     output br2_probe2,
     output br_ram_cs_n,
     output br_uartb_cs_n,
+    output br_acia_cs_n,
 
     /*
      * Alchitry IO V2 LED banks.
@@ -1077,6 +1078,7 @@ module alchitry_top (
          * A12 selects the complementary half required by this address map.
          */
         acia_cs_n = y[3] | active_address[12]
+        br_acia_cs_n = acia_cs_n
 
 
         /**********************************************************************

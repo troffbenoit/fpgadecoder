@@ -492,6 +492,12 @@ B42 with ROM address 0x8000:
 
 MEASURED RESULT
 ---------------
+B30:
+
+    PASS
+    ACIA active-low chip select verified
+    Address 5000 = HIGH (ACIA NOT SELECTED)
+    Address 6000 = LOW  (ACIA SELECTED)
 
 B41:
 

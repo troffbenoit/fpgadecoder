@@ -18,5 +18,6 @@ STANDARD(LVCMOS33), SIDE(TOP) {
     pin br2_probe2 B42
     pin br_ram_cs_n B24
     pin br_uartb_cs_n B28
+    pin br_acia_cs_n B30
 
 }
