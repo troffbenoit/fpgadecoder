@@ -528,6 +528,13 @@ B24:
     Address 8000 = HIGH (RAM NOT SELECTED)
     Address 0000 = LOW  (RAM SELECTED)
 
+    B28:
+
+    PASS
+    UART-B active-low chip select verified
+    Address 8000 = HIGH (UART-B NOT SELECTED)
+    Address 5000 = LOW  (UART-B SELECTED)
+
 OVERALL RESULT
 --------------
 
@@ -537,6 +544,7 @@ OVERALL RESULT
 B41 remains a verified 1 kHz diagnostic output.
 
 B42 is now a verified active-low ROM chip-select output.
+
 
 
 ###############################################################################

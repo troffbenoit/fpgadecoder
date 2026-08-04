@@ -167,6 +167,7 @@ module alchitry_top (
 
     output br2_probe2,
     output br_ram_cs_n,
+    output br_uartb_cs_n,
 
     /*
      * Alchitry IO V2 LED banks.
@@ -1066,6 +1067,7 @@ module alchitry_top (
          * UART-B is selected only when both required terms produce LOW.
          */
         uartb_cs_n = y[2] | ~active_address[12]
+        br_uartb_cs_n = uartb_cs_n
 
         /*
          * ACIA SELECT
