@@ -1,52 +1,242 @@
+/******************************************************************************
+ * FILE:
+ *     alchitry_top.luc
+ *
+ * PROJECT:
+ *     6502 FPGA Address Decoder
+ *
+ * AUTHOR:
+ *     Stanley Benoit
+ *
+ * PURPOSE:
+ *     Top-level Lucid module for the 6502 address-decoder development system.
+ *
+ *     This module currently performs five major jobs:
+ *
+ *       1. Accept a manually selected 16-bit address from the Alchitry IO V2
+ *          DIP switches.
+ *
+ *       2. Provide a single-step automatic 4 KB page address generator for
+ *          exercising the decoder without repeatedly changing all switches.
+ *
+ *       3. Decode the selected address through an LS138-style 3-to-8 decoder
+ *          and generate active-low chip-select signals for ROM, RAM, UART-B,
+ *          and ACIA regions.
+ *
+ *       4. Display the currently selected 16-bit address on the four-digit
+ *          hexadecimal seven-segment display and mirror important states on
+ *          LEDs for bench troubleshooting.
+ *
+ *       5. Provide temporary hardware-development diagnostics:
+ *            - UART transmit test: send ASCII 'A' at 115200 baud.
+ *            - 1 kHz square-wave test on Bank-B outputs for oscilloscope
+ *              verification of physical FPGA pin routing.
+ *
+ * DESIGN PHILOSOPHY:
+ *     This source is intentionally verbose. The comments explain not only
+ *     WHAT each statement does, but WHY it exists, what hardware it implies,
+ *     and what should be observable during bench testing.
+ *
+ *     The coding style is NASA/JPL "Power of Ten"-inspired rather than a
+ *     literal software implementation of those rules. FPGA HDL differs from
+ *     conventional C software, so the principles are adapted to hardware:
+ *
+ *       01. Keep control flow simple and bounded.
+ *       02. Avoid hidden or recursive behavior.
+ *       03. Give every top-level output an explicit driver.
+ *       04. Give every module input an explicit driver.
+ *       05. Establish safe/default assignments before conditional overrides.
+ *       06. Do not gate the FPGA clock; use clock enables/counters instead.
+ *       07. Make state storage explicit with DFFs.
+ *       08. Keep combinational decode logic simple and inspectable.
+ *       09. Use descriptive signal names, including "_n" for active-low.
+ *       10. Add and verify one hardware feature at a time; preserve known-good
+ *           behavior and create Git checkpoints at verified milestones.
+ *
+ * IMPORTANT HARDWARE CONVENTIONS:
+ *
+ *     Active-low signals:
+ *         A signal ending in "_n" is asserted when LOW.
+ *
+ *         Example:
+ *             rom_cs_n == 0  -> ROM selected
+ *             rom_cs_n == 1  -> ROM not selected
+ *
+ *     Clock:
+ *         The Alchitry Au V2 system clock is 100 MHz.
+ *
+ *     Reset:
+ *         rst_n is the external active-low reset input.
+ *         reset_conditioner creates the internal active-high synchronous/
+ *         conditioned reset signal named rst.
+ *
+ *     Bank-B diagnostic outputs:
+ *         br2_test   -> currently carries the generated 1 kHz square wave.
+ *         br2_probe2 -> currently carries the same 1 kHz square wave.
+ *
+ *         These are temporary development signals used to prove that the
+ *         FPGA logic, ACF constraint, connector routing, and oscilloscope
+ *         measurement chain are all working correctly.
+ *
+ * CHANGE LOG:
+ *
+ *     2026-07-02
+ *       - Cleaned indentation.
+ *       - Preserved known-good single-step page counter.
+ *       - Auto-run switch SW4 read and displayed; automatic stepping left
+ *         intentionally disabled because previous attempts caused display
+ *         flicker.
+ *       - SW3 selects manual/automatic address source.
+ *       - Right IO button advances automatic address by 4 KB pages.
+ *       - Added explicit wrap from F000 back to 0000.
+ *
+ *     2026-08-01
+ *       - Added uart_tx module to the top-level design.
+ *       - Added rising-edge button trigger for UART transmit testing.
+ *       - UART test transmits ASCII 'A' (0x41) at 115200 baud.
+ *       - Hardware-verified UART data through the board USB/FTDI interface.
+ *       - Added 100 MHz-to-1 kHz diagnostic square-wave divider.
+ *       - Added Bank-B diagnostic output br2_test.
+ *       - Added second Bank-B diagnostic output br2_probe2.
+ *       - Hardware-verified two simultaneous 1 kHz square waves with an
+ *         oscilloscope.
+ *
+ *     2026-08-02
+ *       - Performed documentation and maintainability review.
+ *       - Added detailed variable, module, timing, decoder, and bench-test
+ *         comments throughout the file.
+ *       - Removed duplicate UART test assignments while preserving the
+ *         known-good busy-qualified rising-edge trigger.
+ *       - Cleaned indentation around Bank-B diagnostic divider.
+ *       - Preserved functional decoder behavior.
+ *
+ ******************************************************************************/
+
 module alchitry_top (
+    /*
+     * 100 MHz system clock supplied by the Alchitry Au V2.
+     *
+     * All sequential state in this design is clocked from this one clock.
+     * The clock is never gated. Slower activities are derived with counters.
+     */
     input clk,
+
+    /*
+     * External active-low reset input.
+     *
+     * This is passed through reset_conditioner before being used internally.
+     */
     input rst_n,
 
+    /*
+     * Eight LEDs located on the Alchitry Au V2 base board.
+     *
+     * These provide immediate visual indication of decoder selections,
+     * operating mode, and selected IO-button states.
+     */
     output led[8],
 
-    input usb_rx,
+    /*
+     * USB UART receive signal from the board's USB/FTDI interface.
+     *
+     * It is intentionally not used yet because the present UART development
+     * milestone implements transmit-only operation.
+     */
+
+    /*
+     * USB UART transmit signal to the board's USB/FTDI interface.
+     *
+     * Driven by uart.tx from the custom uart_tx module.
+     */
     output usb_tx,
 
+    /*
+     * Temporary Bank-B diagnostic output.
+     *
+     * The ACF file currently maps this signal to a verified Bank-B FPGA pin.
+     * It carries a 1 kHz square wave for oscilloscope and routing tests.
+     */
+    output br2_test,
+
+    /*
+     * Second temporary Bank-B diagnostic output.
+     *
+     * It currently carries the same 1 kHz waveform as br2_test so two
+     * physical Bank-B outputs can be verified simultaneously.
+     */
+    output br2_probe2,
+
+    /*
+     * Alchitry IO V2 LED banks.
+     *
+     * Three banks of eight LEDs are available. The project currently uses
+     * selected Bank-2 LEDs to indicate jumper/mode switch states.
+     */
     output io_led[3][8],
+
+    /*
+     * Seven-segment display segment outputs.
+     *
+     * multi_seven_seg produces active-high logical segment data; the IO V2
+     * hardware is driven with inverted signals below.
+     */
     output io_segment[8],
+
+    /*
+     * Four digit-select outputs for the multiplexed hexadecimal display.
+     *
+     * These are also inverted before reaching the IO V2 hardware.
+     */
     output io_select[4],
+
+    /*
+     * Five IO V2 pushbuttons.
+     *
+     * Current assignments:
+     *     io_button[0] -> UART test transmit trigger.
+     *     io_button[4] -> single-step automatic address advance.
+     *     io_button[2] -> mirrored to Au LED6.
+     *     io_button[3] -> mirrored to Au LED7.
+     */
     input io_button[5],
+
+    /*
+     * Three banks of eight IO V2 DIP switches.
+     *
+     * Current assignments:
+     *     Bank 0 -> manual address bits A15..A8
+     *     Bank 1 -> manual address bits A7..A0
+     *     Bank 2 -> decoder enable/mode controls
+     */
     input io_dip[3][8]
 ) {
 
-    // ========================================================
-    // PROJECT:
-    //     6502 FPGA Address Decoder
-    //
-    // AUTHOR:
-    //     Stanley Benoit 2026
-    //
-    // CHANGE LOG:
-    //
-    // 2026-07-02
-    // - Cleaned indentation.
-    // - Preserved known-good single-step page counter.
-    // - Auto-run switch SW4 is read and displayed, but automatic
-    //   stepping is intentionally disabled for now.
-    // - SW3 selects auto/manual mode.
-    // - Right IO button advances auto address by 4 KB pages.
-    // - Explicit wrap from F000 back to 0000.
-    //
-    // NASA / FLIGHT-READY STYLE RULES:
-    //
-    // 01. Drive every top-level output.
-    // 02. Drive every module input.
-    // 03. Use safe defaults before specific assignments.
-    // 04. Keep active-low signals clearly named with _n.
-    // 05. Test one small function at a time.
-    // 06. Do not gate the FPGA clock.
-    // 07. Use clear signal names.
-    // 08. Avoid clever code that is hard to debug.
-    // 09. Keep decoder logic combinational.
-    // 10. Preserve known-good behavior when adding features.
-    // ========================================================
+    /**************************************************************************
+     * INTERNAL RESET SIGNAL
+     **************************************************************************/
 
+    /*
+     * Conditioned, internal active-high reset.
+     *
+     * reset_cond converts the external active-low rst_n input into a clean
+     * reset signal used by all state elements inside the .rst(rst) block.
+     */
     sig rst
+
+
+    /**************************************************************************
+     * INDIVIDUAL 6502 ADDRESS-BIT SIGNALS
+     *
+     * These named one-bit signals intentionally mirror the conventional 6502
+     * bus names A0 through A15.
+     *
+     * Why keep individual signals instead of using only a 16-bit vector?
+     *
+     *     - It makes the physical DIP-switch mapping obvious.
+     *     - It makes bench troubleshooting easier.
+     *     - It allows a reader to follow each address line independently.
+     *     - The signals are later concatenated into manual_address[16].
+     **************************************************************************/
 
     sig a0
     sig a1
@@ -65,40 +255,353 @@ module alchitry_top (
     sig a14
     sig a15
 
+
+    /**************************************************************************
+     * ADDRESS-SOURCE CONTROL AND ADDRESS VECTORS
+     **************************************************************************/
+
+    /*
+     * auto_mode
+     * ---------
+     * Selects which address source is sent to the decoder.
+     *
+     *     0 -> manual_address from DIP switches
+     *     1 -> auto_address from the page-step counter
+     */
     sig auto_mode
+
+    /*
+     * auto_run
+     * --------
+     * Reserved control input for a future automatically advancing address
+     * mode. It is currently read and displayed but intentionally does not
+     * advance the address counter.
+     */
     sig auto_run
+
+    /*
+     * manual_address[16]
+     * ------------------
+     * Complete 16-bit address assembled from Bank-0 and Bank-1 DIP switches.
+     */
     sig manual_address[16]
+
+    /*
+     * auto_address[16]
+     * ----------------
+     * Complete 16-bit address generated by auto_counter.
+     *
+     * Current sequence:
+     *     0000, 1000, 2000, ... E000, F000, 0000
+     */
     sig auto_address[16]
+
+    /*
+     * active_address[16]
+     * ------------------
+     * The one 16-bit address that is actually presented to the decoder and
+     * hexadecimal display.
+     *
+     * It is selected between manual_address and auto_address by auto_mode.
+     */
     sig active_address[16]
 
+
+    /**************************************************************************
+     * LS138 ENABLE-PATH MODEL SIGNALS
+     **************************************************************************/
+
+    /*
+     * jp1_vcc_path
+     * ------------
+     * Represents one selectable enable path into the LS138 model.
+     * Driven from IO V2 Bank-2 switch position [7].
+     */
     sig jp1_vcc_path
+
+    /*
+     * jp1_clk_path
+     * ------------
+     * Represents the second selectable enable path into the LS138 model.
+     * Driven from IO V2 Bank-2 switch position [6].
+     */
     sig jp1_clk_path
+
+    /*
+     * decode_enable
+     * -------------
+     * Combined active-high enable for the LS138 decoder.
+     *
+     * Either JP1 path may enable decoding:
+     *
+     *     decode_enable = jp1_vcc_path OR jp1_clk_path
+     */
     sig decode_enable
 
+
+    /**************************************************************************
+     * LS138 OUTPUT BUS
+     **************************************************************************/
+
+    /*
+     * y[8]
+     * ----
+     * Eight active-low outputs from the LS138-style decoder.
+     *
+     * At most one output is asserted LOW when the decoder is enabled.
+     * These outputs form the coarse address regions used by the final
+     * ROM/RAM/UART/ACIA chip-select equations.
+     */
     sig y[8]
 
+
+    /**************************************************************************
+     * HEXADECIMAL DISPLAY NIBBLES
+     **************************************************************************/
+
+    /*
+     * Each addrN signal holds one four-bit hexadecimal digit from the selected
+     * 16-bit address.
+     *
+     * Example:
+     *
+     *     active_address = 16hA123
+     *
+     *     addr3 = A
+     *     addr2 = 1
+     *     addr1 = 2
+     *     addr0 = 3
+     */
     sig addr3[4]
     sig addr2[4]
     sig addr1[4]
     sig addr0[4]
 
+    /*
+     * Four-element array passed to the multi_seven_seg display driver.
+     *
+     * Index 0 is the least-significant hex digit.
+     * Index 3 is the most-significant hex digit.
+     */
     sig display_digits[4][4]
 
+
+    /**************************************************************************
+     * ACTIVE-LOW CHIP-SELECT SIGNALS
+     *
+     * "_n" means the signal is ACTIVE LOW.
+     *
+     *     0 -> selected
+     *     1 -> not selected
+     **************************************************************************/
+
+    /*
+     * ROM chip select.
+     *
+     * The final equation combines LS138 regions y[4] through y[7].
+     */
     sig rom_cs_n
+
+    /*
+     * RAM chip select.
+     */
     sig ram_cs_n
+
+    /*
+     * UART-B chip select.
+     *
+     * Uses an LS138 region plus address bit A12 for sub-region selection.
+     */
     sig uartb_cs_n
+
+    /*
+     * ACIA chip select.
+     *
+     * Uses an LS138 region plus address bit A12 for sub-region selection.
+     */
     sig acia_cs_n
 
+
+    /**************************************************************************
+     * COMBINATIONAL MODULE INSTANCE: LS138 DECODER
+     **************************************************************************/
+
+    /*
+     * Custom ls138 module.
+     *
+     * Inputs:
+     *     a, b, c  -> three address-select bits
+     *     g1       -> active-high enable
+     *     g2a_n    -> active-low enable
+     *     g2b_n    -> active-low enable
+     *
+     * Output:
+     *     y[8]     -> active-low one-of-eight decoded outputs
+     */
     ls138 decoder
 
+
+    /**************************************************************************
+     * CLOCKED/RESETTABLE HARDWARE
+     *
+     * .clk(clk) automatically connects the clk input of enclosed clocked
+     * components to the 100 MHz system clock.
+     *
+     * .rst(rst) automatically connects the reset input of enclosed DFFs and
+     * compatible modules to the conditioned reset signal.
+     **************************************************************************/
+
     .clk(clk) {
+
+        /*
+         * Reset conditioner.
+         *
+         * Converts the raw external reset into a clean internal reset.
+         */
         reset_conditioner reset_cond
 
         .rst(rst) {
+
+            /*
+             * slow_counter[26]
+             * ----------------
+             * Reserved divider/counter for the future auto-run function.
+             *
+             * It is intentionally frozen in the current known-good design.
+             * Previous automatic stepping experiments caused display flicker,
+             * so auto-run remains disabled until it can be reintroduced and
+             * verified separately.
+             */
             dff slow_counter[26]
+
+            /*
+             * auto_counter[16]
+             * ----------------
+             * Stores the automatically generated 16-bit test address.
+             *
+             * It advances by 0x1000 (4 KB) for each detected rising edge of
+             * io_button[4], then wraps from 0xF000 to 0x0000.
+             */
             dff auto_counter[16]
+
+            /*
+             * step_button_old
+             * ---------------
+             * Stores the PREVIOUS sampled state of io_button[4].
+             *
+             * Comparing the current button level with this previous value
+             * creates a rising-edge detector:
+             *
+             *     current = 1
+             *     previous = 0
+             *
+             * This causes one address step per button press instead of
+             * repeatedly stepping for every 100 MHz clock while held.
+             */
             dff step_button_old
 
+            /*
+             * uart_button_old
+             * ---------------
+             * Stores the PREVIOUS sampled state of io_button[0].
+             *
+             * It performs the same rising-edge-detection job for the UART
+             * test trigger. A single press requests one ASCII 'A'.
+             */
+            dff uart_button_old
+
+            /*
+             * br2_counter[16]
+             * ----------------
+             * 100 MHz-to-1 kHz CLOCK-DIVIDER COUNTER.
+             *
+             * This counter creates the timing for the Bank-B diagnostic
+             * square wave.
+             *
+             * System clock:
+             *
+             *     100,000,000 clocks / second
+             *
+             * Desired square-wave frequency:
+             *
+             *     1,000 complete cycles / second
+             *
+             * A square wave needs TWO transitions for every full cycle:
+             *
+             *     LOW  -> HIGH
+             *     HIGH -> LOW
+             *
+             * Therefore one output transition is required every:
+             *
+             *     100,000,000 / (2 * 1,000)
+             *     = 50,000 system clocks
+             *
+             * Counting from 0 through 49,999 produces exactly 50,000 clocks.
+             *
+             * At 100 MHz:
+             *
+             *     50,000 clocks = 500 microseconds
+             *
+             * br2_square toggles every 500 us:
+             *
+             *     HIGH for approximately 500 us
+             *     LOW  for approximately 500 us
+             *
+             * giving:
+             *
+             *     period     = 1 ms
+             *     frequency  = 1 kHz
+             *     duty cycle = approximately 50%
+             *
+             * Sixteen bits are sufficient because 49,999 fits below 65,535.
+             */
+            dff br2_counter[16]
+
+            /*
+             * br2_square
+             * ----------
+             * Stores the PRESENT HIGH/LOW state of the generated 1 kHz
+             * diagnostic waveform.
+             *
+             * br2_counter answers:
+             *     "When is it time to toggle?"
+             *
+             * br2_square answers:
+             *     "What logic level should the physical pin have now?"
+             *
+             * Keeping timing state and output state separate makes the
+             * hardware easier to understand and probe.
+             */
+            dff br2_square
+
+            /*
+             * UART transmitter.
+             *
+             * The surrounding .clk(clk) and .rst(rst) scopes automatically
+             * provide its system clock and reset connections.
+             *
+             * The top-level logic below supplies:
+             *     uart.start
+             *     uart.data
+             *
+             * and consumes:
+             *     uart.tx
+             *     uart.busy
+             */
+            uart_tx uart
+
+            /*
+             * Four-digit multiplexed seven-segment display driver.
+             *
+             * DIV:
+             *     Controls display refresh timing.
+             *
+             *     Simulation uses DIV=1 so tests run quickly.
+             *     Hardware uses DIV=16 for a practical multiplex rate.
+             *
+             * DIGITS:
+             *     Four hexadecimal digits are physically present.
+             */
             multi_seven_seg seg (
                 #DIV($is_sim() ? 1 : 16),
                 #DIGITS(4)
@@ -106,88 +609,284 @@ module alchitry_top (
         }
     }
 
+
+    /**************************************************************************
+     * MAIN COMBINATIONAL CONTROL BLOCK
+     *
+     * Lucid's always block continuously describes combinational next-state
+     * and output logic.
+     *
+     * DFF behavior follows the standard pattern:
+     *
+     *     register.d = desired next value
+     *     register.q = presently stored value
+     **************************************************************************/
+
     always {
 
-        // ====================================================
-        // RESET AND USB
-        // ====================================================
+        /**********************************************************************
+         * RESET CONDITIONING
+         **********************************************************************/
 
+        /*
+         * reset_cond.in receives the external active-low reset after inversion.
+         *
+         * When rst_n is LOW:
+         *     ~rst_n is HIGH
+         *     reset_cond.in is asserted
+         */
         reset_cond.in = ~rst_n
+
+        /*
+         * Internal reset distributed to the .rst(rst) scope.
+         */
         rst = reset_cond.out
 
-        usb_tx = usb_rx
+        /**********************************************************************
+         * UART TRANSMIT-ONLY HARDWARE TEST
+         *
+         * Purpose:
+         *     Verify that custom FPGA UART logic can send a known byte through
+         *     the board USB/FTDI interface to a Linux serial terminal.
+         *
+         * Test byte:
+         *     ASCII 'A' = hexadecimal 0x41
+         *
+         * Trigger:
+         *     io_button[0] rising edge.
+         *
+         * Busy qualification:
+         *     ~uart.busy prevents a new transaction from being requested while
+         *     the transmitter is already shifting a previous character.
+         **********************************************************************/
 
-        // ====================================================
-        // SAFE DEFAULT OUTPUTS
-        // ====================================================
+        /*
+         * Generate a one-clock-wide transmit request when:
+         *
+         *     1. Button 0 is HIGH now.
+         *     2. Button 0 was LOW on the previous clock.
+         *     3. UART transmitter is not busy.
+         */
+        uart.start = io_button[0] & ~uart_button_old.q & ~uart.busy
 
+        /*
+         * Fixed diagnostic payload.
+         *
+         * 8h41 = binary 0100_0001 = ASCII 'A'
+         */
+        uart.data = 8h41
+
+        /*
+         * Save the current button state so it becomes the "old" state on the
+         * next 100 MHz clock.
+         */
+        uart_button_old.d = io_button[0]
+
+        /*
+         * Route the serialized UART waveform to the physical USB TX output.
+         */
+        usb_tx = uart.tx
+
+
+        /**********************************************************************
+         * SAFE DEFAULT OUTPUTS
+         *
+         * Establish known values before later logic selectively overrides
+         * individual bits. This makes ownership obvious and helps avoid
+         * accidental latches/undriven outputs.
+         **********************************************************************/
+
+        /*
+         * Turn all eight Au-board LEDs off by default.
+         */
         led = 8h00
 
+        /*
+         * Turn all three eight-bit IO V2 LED banks off by default.
+         *
+         * Individual Bank-2 LEDs are assigned later.
+         */
         io_led[0] = 8h00
         io_led[1] = 8h00
         io_led[2] = 8h00
 
+        /*
+         * Give every display digit a defined value before the selected address
+         * is copied into it later.
+         */
         display_digits[0] = 4h0
         display_digits[1] = 4h0
         display_digits[2] = 4h0
         display_digits[3] = 4h0
 
-        // ====================================================
-        // @AUTO_MODE
-        //
-        // Bank 2 SW3:
-        //     OFF = manual DIP-switch address
-        //     ON  = auto address from page counter
-        //
-        // Bank 2 SW4:
-        //     Reserved for future auto-run mode.
-        //     Read and displayed, but not used to count yet.
-        // ====================================================
 
+        /**********************************************************************
+         * MODE SWITCHES
+         *
+         * IO V2 Bank 2:
+         *
+         *     io_dip[2][5] -> AUTO MODE SELECT
+         *     io_dip[2][4] -> FUTURE AUTO-RUN ENABLE
+         **********************************************************************/
+
+        /*
+         * 0 = manual address from DIP switches
+         * 1 = automatic address from auto_counter
+         */
         auto_mode = io_dip[2][5]
-        auto_run  = io_dip[2][4]
 
-        // ====================================================
-        // SINGLE-STEP AUTO ADDRESS GENERATOR
-        //
-        // Right IO button advances auto_counter by one 4 KB page.
-        //
-        // step_button_old.q = previous button state
-        // io_button[4]      = current button state
-        //
-        // Counter advances only on rising edge:
-        //
-        //     old = 0
-        //     new = 1
-        //
-        // Page sequence:
-        //
-        //     0000, 1000, 2000, ... F000, 0000
-        //
-        // slow_counter is intentionally frozen for now because
-        // previous auto-run attempts caused display flicker.
-        // ====================================================
+        /*
+         * Reserved for future automatic stepping.
+         *
+         * This signal is deliberately NOT connected to counter advancement yet.
+         */
+        auto_run = io_dip[2][4]
 
+
+        /**********************************************************************
+         * FUTURE AUTO-RUN CLOCK DIVIDER
+         **********************************************************************/
+
+        /*
+         * Explicitly hold slow_counter at its current value.
+         *
+         * This is intentional. The future automatic-run divider is disabled
+         * while the known-good single-step design is preserved.
+         */
         slow_counter.d = slow_counter.q
 
+
+        /**********************************************************************
+         * 1 kHz BANK-B DIAGNOSTIC SQUARE-WAVE GENERATOR
+         *
+         * This block is independent of the address decoder. Its purpose is to
+         * create a predictable signal that can be checked with an oscilloscope.
+         **********************************************************************/
+
+        /*
+         * Default/hold assignments.
+         *
+         * Unless the terminal count is reached, retain current state.
+         */
+        br2_counter.d = br2_counter.q
+        br2_square.d = br2_square.q
+
+        /*
+         * Terminal-count comparison.
+         *
+         * 16d49999 means decimal 49,999 stored as a 16-bit value.
+         *
+         * Because the count begins at zero, values 0..49,999 represent
+         * exactly 50,000 system-clock periods.
+         */
+        if (br2_counter.q == 16d49999) {
+
+            /*
+             * Begin timing the next 500 us half-cycle.
+             */
+            br2_counter.d = 0
+
+            /*
+             * Toggle the stored output state:
+             *
+             *     0 becomes 1
+             *     1 becomes 0
+             */
+            br2_square.d = ~br2_square.q
+
+        } else {
+
+            /*
+             * One 100 MHz system-clock period has elapsed.
+             * Advance the divider counter by one.
+             */
+            br2_counter.d = br2_counter.q + 1
+        }
+
+        /*
+         * Drive both temporary Bank-B probe outputs from the same stored
+         * square-wave state.
+         *
+         * These two outputs were used to verify two physical connector pins
+         * simultaneously on a two-channel oscilloscope.
+         */
+        br2_test = br2_square.q
+        br2_probe2 = br2_square.q
+
+
+        /**********************************************************************
+         * SINGLE-STEP AUTOMATIC ADDRESS GENERATOR
+         *
+         * io_button[4] is the page-step pushbutton.
+         *
+         * One rising edge advances the address by 0x1000 = 4096 bytes = 4 KB.
+         *
+         * Sequence:
+         *
+         *     0000
+         *     1000
+         *     2000
+         *       .
+         *       .
+         *       .
+         *     E000
+         *     F000
+         *     0000
+         **********************************************************************/
+
+        /*
+         * Detect a rising edge:
+         *
+         *     current button = 1
+         *     previous state = 0
+         */
         if (io_button[4] & ~step_button_old.q) {
+
+            /*
+             * Explicit terminal-state handling.
+             *
+             * Do not rely on accidental arithmetic overflow. When F000 is
+             * reached, intentionally return to 0000.
+             */
             if (auto_counter.q == 16hF000) {
                 auto_counter.d = 16h0000
             } else {
+
+                /*
+                 * Advance by one 4 KB page.
+                 */
                 auto_counter.d = auto_counter.q + 16h1000
             }
+
         } else {
+
+            /*
+             * No new button edge: retain the present automatic address.
+             */
             auto_counter.d = auto_counter.q
         }
 
+        /*
+         * Store the current button state for next-cycle edge detection.
+         */
         step_button_old.d = io_button[4]
 
+        /*
+         * auto_address is a combinational view of the stored counter.
+         */
         auto_address = auto_counter.q
 
-        // ====================================================
-        // @BANK0_SWITCHES
-        // BANK 0 = A15..A8
-        // ====================================================
+
+        /**********************************************************************
+         * MANUAL ADDRESS INPUT: IO V2 BANK 0
+         *
+         * Bank 0 provides the upper byte of the 6502 address:
+         *
+         *     switch 7 -> A15
+         *     switch 6 -> A14
+         *       ...
+         *     switch 0 -> A8
+         **********************************************************************/
 
         a15 = io_dip[0][7]
         a14 = io_dip[0][6]
@@ -198,10 +897,17 @@ module alchitry_top (
         a9  = io_dip[0][1]
         a8  = io_dip[0][0]
 
-        // ====================================================
-        // @BANK1_SWITCHES
-        // BANK 1 = A7..A0
-        // ====================================================
+
+        /**********************************************************************
+         * MANUAL ADDRESS INPUT: IO V2 BANK 1
+         *
+         * Bank 1 provides the lower byte of the 6502 address:
+         *
+         *     switch 7 -> A7
+         *     switch 6 -> A6
+         *       ...
+         *     switch 0 -> A0
+         **********************************************************************/
 
         a7 = io_dip[1][7]
         a6 = io_dip[1][6]
@@ -212,9 +918,13 @@ module alchitry_top (
         a1 = io_dip[1][1]
         a0 = io_dip[1][0]
 
-        // ====================================================
-        // BUILD MANUAL ADDRESS
-        // ====================================================
+
+        /**********************************************************************
+         * BUILD THE 16-BIT MANUAL ADDRESS
+         *
+         * c{...} concatenates the individual bits from most-significant to
+         * least-significant order.
+         **********************************************************************/
 
         manual_address = c{
             a15, a14, a13, a12,
@@ -223,86 +933,245 @@ module alchitry_top (
             a3,  a2,  a1,  a0
         }
 
-        // ====================================================
-        // @ACTIVE_ADDRESS_SELECT
-        // ====================================================
 
+        /**********************************************************************
+         * SELECT THE ACTIVE ADDRESS SOURCE
+         **********************************************************************/
+
+        /*
+         * auto_mode acts like a 16-bit 2-to-1 multiplexer select:
+         *
+         *     auto_mode = 1 -> use generated page address
+         *     auto_mode = 0 -> use physical DIP-switch address
+         */
         if (auto_mode) {
             active_address = auto_address
         } else {
             active_address = manual_address
         }
 
-        // ====================================================
-        // @JP1_ENABLE
-        //
-        // Bank 2 SW1 or SW2 enables LS138.
-        // ====================================================
 
+        /**********************************************************************
+         * LS138 ENABLE-PATH CONTROLS
+         *
+         * These switches model the enable-routing choices used by the decoder
+         * hardware concept.
+         **********************************************************************/
+
+        /*
+         * Bank-2 switch [7] controls the VCC-style enable path.
+         */
         jp1_vcc_path = io_dip[2][7]
+
+        /*
+         * Bank-2 switch [6] controls the alternate/clock-style enable path.
+         */
         jp1_clk_path = io_dip[2][6]
 
+        /*
+         * Either asserted path enables the LS138.
+         */
         decode_enable = jp1_vcc_path | jp1_clk_path
 
+        /*
+         * Mirror the control states on Bank-2 IO LEDs.
+         *
+         * These are extremely useful when the decoder does not appear to be
+         * active: first confirm that the expected enable/mode LEDs agree with
+         * the switches.
+         */
         io_led[2][7] = jp1_vcc_path
         io_led[2][6] = jp1_clk_path
         io_led[2][5] = auto_mode
         io_led[2][4] = auto_run
 
-        // ====================================================
-        // @LS138_WIRING
-        // ====================================================
+
+        /**********************************************************************
+         * LS138 ADDRESS AND ENABLE WIRING
+         *
+         * active_address[15:13] selects one of eight 8 KB coarse regions.
+         *
+         * Mapping:
+         *
+         *     decoder.a <- A13
+         *     decoder.b <- A14
+         *     decoder.c <- A15
+         *
+         * This ordering preserves the known-good ls138 module interface.
+         **********************************************************************/
 
         decoder.a = active_address[13]
         decoder.b = active_address[14]
         decoder.c = active_address[15]
 
+        /*
+         * LS138 enable inputs:
+         *
+         *     G1     is active HIGH.
+         *     G2A_n  is active LOW.
+         *     G2B_n  is active LOW.
+         *
+         * Both active-low enables are permanently asserted here by driving 0.
+         * decode_enable therefore controls whether the decoder is active.
+         */
         decoder.g1 = decode_enable
         decoder.g2a_n = 0
         decoder.g2b_n = 0
 
+        /*
+         * Copy the module's eight active-low outputs into the local y bus.
+         */
         y = decoder.y
 
-        // ====================================================
-        // CHIP SELECT DECODE
-        // ====================================================
 
-        rom_cs_n   = y[4] & y[5] & y[6] & y[7]
-        ram_cs_n   = y[0]
+        /**********************************************************************
+         * FINAL CHIP-SELECT DECODE
+         *
+         * These equations preserve the existing known-good address map.
+         *
+         * Remember:
+         *     all *_cs_n signals are active LOW.
+         **********************************************************************/
+
+        /*
+         * ROM SELECT
+         * ----------
+         *
+         * y[4], y[5], y[6], and y[7] represent the upper four LS138 regions.
+         *
+         * Because each y output is active LOW, the AND expression becomes LOW
+         * whenever any one of these upper regions is selected.
+         */
+        rom_cs_n = y[4] & y[5] & y[6] & y[7]
+
+        /*
+         * RAM SELECT
+         * ----------
+         *
+         * RAM directly follows LS138 output y[0].
+         */
+        ram_cs_n = y[0]
+
+        /*
+         * UART-B SELECT
+         * -------------
+         *
+         * y[2] provides the coarse LS138 region.
+         * A12 further subdivides that region.
+         *
+         * The OR expression remains active-low:
+         * UART-B is selected only when both required terms produce LOW.
+         */
         uartb_cs_n = y[2] | ~active_address[12]
-        acia_cs_n  = y[3] |  active_address[12]
 
-        // ====================================================
-        // @AU_LED_OUTPUTS
-        // ====================================================
+        /*
+         * ACIA SELECT
+         * -----------
+         *
+         * y[3] provides the coarse LS138 region.
+         * A12 selects the complementary half required by this address map.
+         */
+        acia_cs_n = y[3] | active_address[12]
 
+
+        /**********************************************************************
+         * ALCHITRY AU V2 LED STATUS OUTPUTS
+         *
+         * LEDs 0..3 convert the active-low chip-selects into active-high LED
+         * indications. Therefore an illuminated LED means that device is
+         * selected.
+         **********************************************************************/
+
+        /*
+         * LED0 ON -> ROM selected.
+         */
         led[0] = ~rom_cs_n
+
+        /*
+         * LED1 ON -> RAM selected.
+         */
         led[1] = ~ram_cs_n
+
+        /*
+         * LED2 ON -> UART-B selected.
+         */
         led[2] = ~uartb_cs_n
+
+        /*
+         * LED3 ON -> ACIA selected.
+         */
         led[3] = ~acia_cs_n
 
+        /*
+         * LED4 ON -> automatic address mode selected.
+         */
         led[4] = auto_mode
+
+        /*
+         * LED5 ON -> auto-run switch is physically ON.
+         *
+         * This still does NOT mean automatic stepping is active.
+         */
         led[5] = auto_run
+
+        /*
+         * LED6 mirrors IO button 2 for simple button/input verification.
+         */
         led[6] = io_button[2]
+
+        /*
+         * LED7 mirrors IO button 3 for simple button/input verification.
+         */
         led[7] = io_button[3]
 
-        // ====================================================
-        // @HEX_DISPLAY
-        // ====================================================
 
+        /**********************************************************************
+         * FOUR-DIGIT HEXADECIMAL ADDRESS DISPLAY
+         *
+         * Split the 16-bit active address into four 4-bit nibbles.
+         **********************************************************************/
+
+        /*
+         * Most-significant hexadecimal digit: A15..A12.
+         */
         addr3 = active_address[15:12]
+
+        /*
+         * Next digit: A11..A8.
+         */
         addr2 = active_address[11:8]
+
+        /*
+         * Next digit: A7..A4.
+         */
         addr1 = active_address[7:4]
+
+        /*
+         * Least-significant hexadecimal digit: A3..A0.
+         */
         addr0 = active_address[3:0]
 
+        /*
+         * multi_seven_seg expects digit index 0 to contain the least-significant
+         * displayed digit and index 3 the most-significant digit.
+         */
         display_digits[0] = addr0
         display_digits[1] = addr1
         display_digits[2] = addr2
         display_digits[3] = addr3
 
+        /*
+         * Send all four hexadecimal values to the display driver.
+         */
         seg.values = display_digits
 
+        /*
+         * IO V2 seven-segment hardware uses active-low drive polarity.
+         *
+         * The display module produces logical active-high segment/select
+         * signals, so invert them at the physical top-level boundary.
+         */
         io_segment = ~seg.seg
-        io_select  = ~seg.sel
+        io_select = ~seg.sel
     }
 }

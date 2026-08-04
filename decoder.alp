@@ -20,6 +20,12 @@
             {
                 "file": {
                     "type": "DiskFile",
+                    "path": "source/uart_tx.luc"
+                }
+            },
+            {
+                "file": {
+                    "type": "DiskFile",
                     "path": "source/ls138.luc"
                 }
             },
