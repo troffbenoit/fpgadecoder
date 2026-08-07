@@ -1,0 +1,244 @@
+/*
+ * 6502_Registers.luc
+ * ==================
+ *
+ * 6502 CPU INTERNAL REGISTER FILE
+ * --------------------------------
+ *
+ * This module implements the internal programmer-visible registers used
+ * by a 6502-style processor.
+ *
+ * The purpose of keeping the registers in their own module is to separate
+ * CPU state storage from the instruction decoder, ALU, address decoder,
+ * memory interface, and control-state machine.
+ *
+ * This makes the register block independently understandable and
+ * testable before it becomes part of the complete CPU.
+ *
+ *
+ * INTERNAL REGISTERS
+ * ------------------
+ *
+ * A  - ACCUMULATOR
+ *
+ *      8-bit general-purpose accumulator.
+ *
+ *      The accumulator is the primary arithmetic and logic register
+ *      in the 6502.
+ *
+ *      Instructions such as ADC, SBC, AND, ORA, EOR, ASL, and LSR
+ *      can operate on this register.
+ *
+ *
+ * X  - X INDEX REGISTER
+ *
+ *      8-bit index register.
+ *
+ *      X is commonly used for indexed addressing, counters, table
+ *      indexing, and loop control.
+ *
+ *
+ * Y  - Y INDEX REGISTER
+ *
+ *      8-bit index register.
+ *
+ *      Y provides a second index register and is heavily used by
+ *      several indexed addressing modes.
+ *
+ *
+ * SP - STACK POINTER
+ *
+ *      8-bit stack pointer.
+ *
+ *      The 6502 stack occupies CPU address page $0100-$01FF.
+ *
+ *      Therefore the processor only needs to store the low eight bits
+ *      of the stack address internally.
+ *
+ *      The complete stack address is formed as:
+ *
+ *          $0100 + SP
+ *
+ *
+ * PC - PROGRAM COUNTER
+ *
+ *      16-bit program counter.
+ *
+ *      PC contains the address of the next instruction byte that the
+ *      processor will fetch.
+ *
+ *      Unlike A, X, Y, and SP, this register must be 16 bits because
+ *      the 6502 has a 16-bit address space:
+ *
+ *          $0000 through $FFFF
+ *
+ *
+ * P  - PROCESSOR STATUS REGISTER
+ *
+ *      8-bit register containing the processor condition/status flags.
+ *
+ *      The conventional 6502 status-bit arrangement is:
+ *
+ *          Bit 7   N   Negative
+ *          Bit 6   V   Overflow
+ *          Bit 5   -   Reserved / unused
+ *          Bit 4   B   Break
+ *          Bit 3   D   Decimal mode
+ *          Bit 2   I   Interrupt disable
+ *          Bit 1   Z   Zero
+ *          Bit 0   C   Carry
+ *
+ *      These flags will eventually be updated by the ALU and CPU
+ *      instruction-control logic.
+ *
+ *
+ * DEVELOPMENT STRATEGY
+ * --------------------
+ *
+ * This module will initially implement only register storage and reset
+ * behavior.
+ *
+ * We will then add register loading, increment/decrement operations,
+ * flag control, and program-counter operations incrementally.
+ *
+ * Each stage should compile and be tested before additional CPU
+ * functionality is added.
+ */
+
+
+module cpu_6502_registers (
+
+    /*
+     * clk
+     * ---
+     *
+     * Main FPGA clock input.
+     *
+     * All internal register changes will occur synchronously with this
+     * clock. CPU control logic will eventually determine which registers
+     * are allowed to change on a particular clock cycle.
+     */
+    input clk,
+
+
+    /*
+     * rst
+     * ---
+     *
+     * Register-file reset input.
+     *
+     * When asserted, this input places the internal register storage into
+     * a known initialization state.
+     *
+     * This FPGA reset should not automatically be assumed to reproduce
+     * every bus cycle performed by a physical 6502 during its hardware
+     * RESET sequence. The CPU control logic can implement that behavior
+     * separately.
+     */
+    input rst,
+
+
+    /*
+     * a[8]
+     * ----
+     *
+     * Current value of the 8-bit accumulator.
+     *
+     * Exposing the register value as an output will also make it easy to
+     * inspect during FPGA development and debugging.
+     */
+    output a[8],
+
+
+    /*
+     * x[8]
+     * ----
+     *
+     * Current value of the 8-bit X index register.
+     */
+    output x[8],
+
+
+    /*
+     * y[8]
+     * ----
+     *
+     * Current value of the 8-bit Y index register.
+     */
+    output y[8],
+
+
+    /*
+     * sp[8]
+     * -----
+     *
+     * Current value of the 8-bit stack pointer.
+     *
+     * The implied high byte of a 6502 stack address is $01.
+     */
+    output sp[8],
+
+
+    /*
+     * pc[16]
+     * ------
+     *
+     * Current value of the 16-bit program counter.
+     *
+     * This register can represent any location in the complete
+     * $0000-$FFFF 6502 address space.
+     */
+    output pc[16],
+
+
+    /*
+     * p[8]
+     * ----
+     *
+     * Current value of the processor status register.
+     *
+     * Bit assignment:
+     *
+     *     7  6  5  4  3  2  1  0
+     *    +--+--+--+--+--+--+--+--+
+     *    |N |V |--|B |D |I |Z |C |
+     *    +--+--+--+--+--+--+--+--+
+     */
+    output p[8]
+) {
+
+    /*
+     * A - ACCUMULATOR REGISTER
+     *
+     * Eight flip-flops that physically store the current value of the
+     * 6502 accumulator inside the FPGA.
+     *
+     * a_reg.q is the present stored value.
+     * The value is exposed outside this module through output a[8].
+     */
+    dff a_reg[8] (
+        .clk(clk),
+        .rst(rst)
+    )
+    a = a_reg.q
+
+    /*
+     * X - X INDEX REGISTER
+     *
+     * Eight flip-flops that physically store the current value of the
+     * 6502 X index register inside the FPGA.
+     *
+     * The X register is used for indexed addressing, loop counters,
+     * table indexing, and register-transfer operations.
+     *
+     * x_reg.q is the present stored value.
+     * The value is exposed outside this module through output x[8].
+     */
+    dff x_reg[8] (
+        .clk(clk),
+        .rst(rst)
+    )
+    x = x_reg.q
+
+
+

@@ -58,6 +58,12 @@
                     "type": "Component",
                     "path": "Miscellaneous/decoder.luc"
                 }
+            },
+            {
+                "file": {
+                    "type": "DiskFile",
+                    "path": "source/cpu_6502_registers.luc"
+                }
             }
         ],
         "constraintFiles": [
