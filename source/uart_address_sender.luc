@@ -648,153 +648,148 @@ dff char_sent (
      **********************************************************************/
 
     always {
+
         /******************************************************************
          * SAFE DEFAULTS
-         *
-         * Defaults are assigned BEFORE conditional logic.
-         *
-         * Later conditions may override these assignments.
          ******************************************************************/
 
-        /*
-         * Default converter input.
-         *
-         * Until a message position explicitly selects an address nibble,
-         * present hexadecimal zero to the converter.
-         *
-         * hex_to_ascii will therefore produce ASCII '0'.
-         */
         converter.nibble = 4h0
 
-
-        /*
-         * Default msg_index behavior:
-         *
-         * Hold the currently stored character position.
-         *
-         * q = current value
-         * d = next value
-         */
         msg_index.d = msg_index.q
-
-
-        /*
-         * Default msg_active behavior:
-         *
-         * Remain in the current idle/active state.
-         */
         msg_active.d = msg_active.q
         char_sent.d = char_sent.q
 
-
-        /*
-         * Default UART start request.
-         *
-         * LOW means:
-         *
-         *     "Do not begin transmitting a new byte this clock."
-         *
-         * Later sequencing logic will momentarily override this with 1
-         * when a new character is ready to transmit.
-         */
         uart.start = 0
-
-
-        /*
-         * Default UART data byte.
-         *
-         * 8h41 is ASCII uppercase 'A'.
-         *
-         * Message position zero uses this byte as the message identifier.
-         */
         uart.data = 8h41
 
 
         /******************************************************************
-         * BEGIN NEW ADDRESS MESSAGE
+         * CHARACTER SELECTION
+         *
+         * Message format:
+         *
+         *     Axxxx
+         *
+         * Example:
+         *
+         *     address = 16h8000
+         *
+         * becomes:
+         *
+         *     A8000
          ******************************************************************/
 
-        /*
-         * Accept a start request only when no message is already active.
-         *
-         * start = 1
-         * msg_active.q = 0
-         *
-         * causes:
-         *
-         *     msg_active.d = 1
-         *
-         *         Begin/remember that a message is active.
-         *
-         *     msg_index.d = 0
-         *
-         *         Begin at message character zero, ASCII 'A'.
-         *
-         * The ~ operator means logical/bitwise inversion:
-         *
-         *     ~0 = 1
-         *     ~1 = 0
-         */
-        if (start & ~msg_active.q) {
-            msg_active.d = 1
-            msg_index.d = 0
+        case (msg_index.q) {
+
+            3d0:
+                uart.data = 8h41
+
+
+            3d1:
+                converter.nibble = address[15:12]
+                uart.data = converter.ascii
+
+
+            3d2:
+                converter.nibble = address[11:8]
+                uart.data = converter.ascii
+
+
+            3d3:
+                converter.nibble = address[7:4]
+                uart.data = converter.ascii
+
+
+            3d4:
+                converter.nibble = address[3:0]
+                uart.data = converter.ascii
+
+            3d5:
+                uart.data = 8h20
+
+            3d6:
+                uart.data = 8h0D
+
+            3d7:
+                uart.data = 8h0A
+
         }
 
 
         /******************************************************************
-         * ADDRESS NIBBLE SELECTION
+         * BEGIN NEW MESSAGE
          ******************************************************************/
 
-        /*
-         * msg_index acts as the select input of a multiplexer.
-         *
-         * At this stage only message position 1 has been implemented.
-         *
-         * When:
-         *
-         *     msg_index.q = 1
-         *
-         * connect:
-         *
-         *     address[15:12]
-         *
-         * to:
-         *
-         *     converter.nibble
-         *
-         *
-         * Example:
-         *
-         *     address = 16hF123
-         *
-         *     address[15:12] = 4hF
-         *
-         * The hex_to_ascii module then converts:
-         *
-         *     4hF
-         *
-         * into:
-         *
-         *     8h46
-         *
-         * which is ASCII 'F'.
-         */
-        case (msg_index.q) {
-            3d1:
-            converter.nibble = address[15:12]
-            uart.data = converter.ascii
+        if (start & ~msg_active.q) {
 
-            3d2:
-            converter.nibble = address[11:8]
-            uart.data = converter.ascii
+            /*
+             * Begin at character zero:
+             *
+             *     'A'
+             */
+            msg_active.d = 1
+            msg_index.d = 0
+            char_sent.d = 0
+        }
 
-            3d3:
-            converter.nibble = address[7:4]
-            uart.data = converter.ascii
 
-            3d4:
-            converter.nibble = address[3:0]
-            uart.data = converter.ascii
+        /******************************************************************
+         * LAUNCH CURRENT CHARACTER
+         *
+         * A character may begin only when:
+         *
+         *     - a complete message is active
+         *     - this character has not already been launched
+         *     - uart_tx is idle
+         ******************************************************************/
+
+        if (msg_active.q & ~char_sent.q & ~uart.busy) {
+
+            /*
+             * One-clock-wide UART start pulse.
+             */
+            uart.start = 1
+
+            /*
+             * Remember that this particular character has now been sent
+             * to the low-level UART transmitter.
+             */
+            char_sent.d = 1
+        }
+
+
+        /******************************************************************
+         * WAIT FOR CHARACTER TO FINISH
+         *
+         * char_sent.q = 1 means uart.start has already occurred.
+         *
+         * We wait until uart.busy returns LOW before advancing to the
+         * next character.
+         ******************************************************************/
+
+        if (msg_active.q & char_sent.q & ~uart.busy) {
+
+            /*
+             * Character four is the final character of:
+             *
+             *     Axxxx
+             */
+            if (msg_index.q == 3d7) {
+
+                /*
+                 * Complete message finished.
+                 */
+                msg_active.d = 0
+                char_sent.d = 0
+
+            } else {
+
+                /*
+                 * Advance to the next character and arm it for transmission.
+                 */
+                msg_index.d = msg_index.q + 1
+                char_sent.d = 0
+            }
         }
 
 
@@ -802,24 +797,15 @@ dff char_sent (
          * OUTPUT CONNECTIONS
          ******************************************************************/
 
-        /*
-         * Pass the physical UART serial waveform to this module's tx
-         * output.
-         *
-         * This is effectively a wire:
-         *
-         *     uart.tx --------> tx
-         */
         tx = uart.tx
 
-
         /*
-         * For the current development stage, expose uart.busy directly.
+         * IMPORTANT:
          *
-         * Later we will review whether this output should instead indicate
-         * that the ENTIRE five-character message is active.
+         * busy represents the ENTIRE Axxxx transaction, not merely one
+         * character being shifted by uart_tx.
          */
-        busy = uart.busy
+        busy = msg_active.q
     }
 }
 
