@@ -1,0 +1,48 @@
+/*
+ * hex_to_ascii.luc
+ * =================
+ *
+ * Converts one 4-bit hexadecimal nibble into the 8-bit ASCII code
+ * for the corresponding hexadecimal character.
+ *
+ * Examples:
+ *
+ *     4h0 -> 8h30 -> ASCII '0'
+ *     4h9 -> 8h39 -> ASCII '9'
+ *     4hA -> 8h41 -> ASCII 'A'
+ *     4hF -> 8h46 -> ASCII 'F'
+ *
+ * This is purely combinational logic. No clock or stored state is
+ * required.
+ */
+
+module hex_to_ascii (
+    input nibble[4],
+    output ascii[8]
+) {
+    always{
+        ascii = 8h30
+
+        case(nibble){
+            4h0: ascii = 8h30
+            4h1: ascii = 8h31
+            4h2: ascii = 8h32
+            4h3: ascii = 8h33
+            4h4: ascii = 8h34
+            4h5: ascii = 8h35
+            4h6: ascii = 8h36
+            4h7: ascii = 8h37
+            4h8: ascii = 8h38
+            4h9: ascii = 8h39
+            4hA: ascii = 8h41
+            4hB: ascii = 8h42
+            4hC: ascii = 8h43
+            4hD: ascii = 8h44
+            4hE: ascii = 8h45
+            4hF: ascii = 8h46
+
+        }
+
+}
+}
+

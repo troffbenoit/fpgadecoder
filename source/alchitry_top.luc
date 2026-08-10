@@ -514,11 +514,6 @@ module alchitry_top (
              */
             dff uart_button_old
 
-            dff uart_msg_index[3]
-            dff uart_msg_active
-
-
-
             /*
              * br2_counter[16]
              * ----------------
@@ -597,7 +592,8 @@ module alchitry_top (
              *     uart.tx
              *     uart.busy
              */
-            uart_tx uart
+            uart_address_sender uart_sender
+
 
             /*
              * Four-digit multiplexed seven-segment display driver.
@@ -650,74 +646,58 @@ module alchitry_top (
          * Internal reset distributed to the .rst(rst) scope.
          */
         rst = reset_cond.out
+            /**********************************************************************
+     * UART ADDRESS TRANSMITTER
+     *
+     * Button 0 transmits the currently selected 16-bit address through
+     * the USB serial connection.
+     *
+     * Example:
+     *
+     *     active_address = 16hC000
+     *
+     * transmitted ASCII:
+     *
+     *     AC000
+     *
+     * The leading 'A' identifies this as an address message.
+     **********************************************************************/
 
-        /**********************************************************************
-         * UART TRANSMIT-ONLY HARDWARE TEST
-         *
-         * Purpose:
-         *     Verify that custom FPGA UART logic can send a known byte through
-         *     the board USB/FTDI interface to a Linux serial terminal.
-         *
-         * Test byte:
-         *     ASCII 'A' = hexadecimal 0x41
-         *
-         * Trigger:
-         *     io_button[0] rising edge.
-         *
-         * Busy qualification:
-         *     ~uart.busy prevents a new transaction from being requested while
-         *     the transmitter is already shifting a previous character.
-         **********************************************************************/
+    /*
+     * Default transmit request.
+     *
+     * start normally remains LOW and is asserted for one FPGA clock when
+     * a new button press is detected.
+     */
+    uart_sender.start = 0
 
-        /*
-         * Generate a one-clock-wide transmit request when:
-         *
-         *     1. Button 0 is HIGH now.
-         *     2. Button 0 was LOW on the previous clock.
-         *     3. UART transmitter is not busy.
-         */
-        uart.start = 0
-        uart_msg_index.d = uart_msg_index.q
-        uart_msg_active.d = uart_msg_active.q
-        /*
-         * Fixed diagnostic payload.
-         *
-         * 8h41 = binary 0100_0001 = ASCII 'A'
-         */
+    /*
+     * Continuously present the selected address to the sender.
+     *
+     * uart_address_sender captures this value internally when a new
+     * transmission begins.
+     */
 
-        case (uart_msg_index.q) {
-            3d0: uart.data = 8h41
-            3d1: uart.data = 8h31
-            3d2: uart.data = 8h32
-            3d3: uart.data = 8h33
-            3d4: uart.data = 8h34
-            default: uart.data = 8h41
-        }
+    /*
+     * Detect a rising edge on IO button 0.
+     *
+     * The sender must also be idle before accepting another request.
+     */
+    if (io_button[0] & ~uart_button_old.q & ~uart_sender.busy) {
+        uart_sender.start = 1
+    }
 
-        if (io_button[0] & ~uart_button_old.q) {
-            uart_msg_active.d = 1
-            uart_msg_index.d = 0
-        }
-        if (uart_msg_active.q & ~uart.busy) {
-            uart.start = 1
+    /*
+     * Save the present button state for rising-edge detection on the
+     * next system clock.
+     */
+    uart_button_old.d = io_button[0]
 
-            if (uart_msg_index.q == 4) {
-                uart_msg_active.d = 0
-            } else {
-                uart_msg_index.d = uart_msg_index.q + 1
-            }
-        }
+    /*
+     * Route the serialized UART output to the physical USB TX connection.
+     */
+    usb_tx = uart_sender.tx
 
-        /*
-         * Save the current button state so it becomes the "old" state on the
-         * next 100 MHz clock.
-         */
-        uart_button_old.d = io_button[0]
-
-        /*
-         * Route the serialized UART waveform to the physical USB TX output.
-         */
-        usb_tx = uart.tx
 
 
         /**********************************************************************
@@ -980,6 +960,8 @@ module alchitry_top (
         } else {
             active_address = manual_address
         }
+        uart_sender.address = active_address
+
 
 
         /**********************************************************************

@@ -62,6 +62,18 @@
             {
                 "file": {
                     "type": "DiskFile",
+                    "path": "source/uart_address_sender.luc"
+                }
+            },
+            {
+                "file": {
+                    "type": "DiskFile",
+                    "path": "source/hex_to_ascii.luc"
+                }
+            },
+            {
+                "file": {
+                    "type": "DiskFile",
                     "path": "source/cpu_6502_registers.luc"
                 }
             }

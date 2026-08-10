@@ -1,0 +1,825 @@
+/*
+ * uart_address_sender.luc
+ * =======================
+ *
+ * 6502 FPGA ADDRESS UART MESSAGE GENERATOR
+ * -----------------------------------------
+ *
+ * PURPOSE
+ * -------
+ *
+ * This module converts the currently selected 16-bit FPGA address into
+ * a human-readable ASCII message and sends that message through the
+ * existing UART transmitter.
+ *
+ * The intended message format is:
+ *
+ *     AHHHH
+ *
+ * where:
+ *
+ *     A     = Message identifier meaning "Address"
+ *
+ *     HHHH  = Four hexadecimal ASCII characters representing the
+ *             complete 16-bit address.
+ *
+ *
+ * EXAMPLE
+ * -------
+ *
+ * If:
+ *
+ *     address = 16hF123
+ *
+ * then the completed module will transmit:
+ *
+ *     AF123
+ *
+ * as five consecutive ASCII bytes:
+ *
+ *     Character       ASCII hexadecimal value
+ *     ---------       -----------------------
+ *
+ *        'A'                  8h41
+ *        'F'                  8h46
+ *        '1'                  8h31
+ *        '2'                  8h32
+ *        '3'                  8h33
+ *
+ *
+ * WHY THIS MODULE EXISTS
+ * ----------------------
+ *
+ * The low-level uart_tx module knows how to transmit ONE eight-bit
+ * character at a time.
+ *
+ * It does not know:
+ *
+ *     - what a 6502 address is,
+ *     - how to split a 16-bit address into hexadecimal digits,
+ *     - how to convert hexadecimal digits into ASCII,
+ *     - or how to send a five-character message.
+ *
+ * Those higher-level responsibilities belong here.
+ *
+ *
+ * DESIGN PARTITIONING
+ * -------------------
+ *
+ * The design is intentionally divided into small modules with clearly
+ * defined responsibilities:
+ *
+ *
+ *     alchitry_top.luc
+ *
+ *         Determines which 16-bit address is currently active.
+ *
+ *                         |
+ *                         | address[15:0]
+ *                         v
+ *
+ *     uart_address_sender.luc
+ *
+ *         Controls the five-character message sequence.
+ *
+ *                         |
+ *              +----------+----------+
+ *              |                     |
+ *              v                     v
+ *
+ *     hex_to_ascii.luc            uart_tx.luc
+ *
+ *     Converts one               Generates actual
+ *     four-bit nibble            UART 8N1 serial
+ *     into one ASCII             waveform at
+ *     character.                 115200 baud.
+ *
+ *
+ * DATA FLOW
+ * ---------
+ *
+ *                         +----------------------+
+ *                         |                      |
+ *     address[15:0] ----->| UART ADDRESS SENDER  |
+ *                         |                      |
+ *     start ------------->|                      |
+ *                         +----------+-----------+
+ *                                    |
+ *                                    |
+ *                             message sequencing
+ *                                    |
+ *                                    v
+ *
+ *                             +--------------+
+ *                             | hex_to_ascii |
+ *                             +------+-------+
+ *                                    |
+ *                               ASCII byte
+ *                                    |
+ *                                    v
+ *
+ *                             +--------------+
+ *                             |   uart_tx    |
+ *                             +------+-------+
+ *                                    |
+ *                                    v
+ *                                   tx
+ *
+ *
+ * MESSAGE POSITION
+ * ----------------
+ *
+ * msg_index identifies which character of the five-character message
+ * is currently being processed.
+ *
+ *     msg_index = 0
+ *
+ *         Transmit literal ASCII 'A'.
+ *
+ *
+ *     msg_index = 1
+ *
+ *         Take:
+ *
+ *             address[15:12]
+ *
+ *         convert that nibble to ASCII, and transmit it.
+ *
+ *
+ *     msg_index = 2
+ *
+ *         Take:
+ *
+ *             address[11:8]
+ *
+ *
+ *     msg_index = 3
+ *
+ *         Take:
+ *
+ *             address[7:4]
+ *
+ *
+ *     msg_index = 4
+ *
+ *         Take:
+ *
+ *             address[3:0]
+ *
+ *
+ * For example:
+ *
+ *     address = 16hF123
+ *
+ * Binary representation:
+ *
+ *         1111 0001 0010 0011
+ *         ---- ---- ---- ----
+ *           F    1    2    3
+ *
+ * Corresponding message positions:
+ *
+ *         index 0     'A'
+ *         index 1     'F'
+ *         index 2     '1'
+ *         index 3     '2'
+ *         index 4     '3'
+ *
+ *
+ * IMPORTANT HARDWARE CONCEPT
+ * --------------------------
+ *
+ * This is FPGA hardware, not sequential software execution.
+ *
+ * Assignments inside the always block describe combinational logic.
+ *
+ * DFF instances describe actual stored state implemented with FPGA
+ * flip-flops.
+ *
+ * In particular:
+ *
+ *     something.q
+ *
+ * means:
+ *
+ *     "the value currently stored in the flip-flop"
+ *
+ *
+ * while:
+ *
+ *     something.d
+ *
+ * means:
+ *
+ *     "the value that will be stored at the next active clock edge"
+ *
+ *
+ * SAFE DEFAULT DESIGN PATTERN
+ * ---------------------------
+ *
+ * Each combinational output or next-state signal receives an explicit
+ * default value before conditional logic overrides it.
+ *
+ * Example:
+ *
+ *     msg_index.d = msg_index.q
+ *
+ * means:
+ *
+ *     "By default, keep the current character position."
+ *
+ *
+ * Later conditional logic may override the default:
+ *
+ *     if (...) {
+ *         msg_index.d = 0
+ *     }
+ *
+ *
+ * This pattern:
+ *
+ *     DEFAULT FIRST
+ *     CONDITION SECOND
+ *
+ * makes the hardware behavior explicit and prevents partially-driven
+ * combinational signals.
+ *
+ *
+ * JPL / NASA-STYLE RELIABILITY PRINCIPLES
+ * ---------------------------------------
+ *
+ * This project is NOT NASA flight-qualified hardware or software.
+ *
+ * The following practices are inspired by the disciplined design and
+ * review philosophy used for safety-critical and flight software,
+ * including the JPL "Power of Ten" rules.
+ *
+ * Those rules were originally written for software and therefore do not
+ * map literally onto FPGA HDL. Their engineering intent is applied here
+ * where appropriate.
+ *
+ *
+ *  1. KEEP CONTROL FLOW SIMPLE
+ *
+ *     Message sequencing should use explicit, understandable states.
+ *
+ *
+ *  2. KEEP OPERATIONS BOUNDED
+ *
+ *     The UART message always contains exactly five characters.
+ *
+ *
+ *  3. AVOID DYNAMIC RESOURCE BEHAVIOR
+ *
+ *     All FPGA resources are statically synthesized.
+ *
+ *
+ *  4. KEEP MODULES SMALL AND SINGLE-PURPOSE
+ *
+ *     This module sequences address messages.
+ *
+ *     hex_to_ascii performs conversion.
+ *
+ *     uart_tx performs serial transmission.
+ *
+ *
+ *  5. MAKE STATE EXPLICIT
+ *
+ *     msg_active and msg_index clearly represent persistent state.
+ *
+ *
+ *  6. DEFINE INTERFACES CLEARLY
+ *
+ *     Inputs and outputs are explicitly documented.
+ *
+ *
+ *  7. GIVE SIGNALS CLEAR OWNERSHIP
+ *
+ *     Every internal and external signal should have one understandable
+ *     source.
+ *
+ *
+ *  8. USE SAFE DEFAULTS
+ *
+ *     Combinational outputs and DFF next-state values receive known
+ *     defaults before conditional overrides.
+ *
+ *
+ *  9. DESIGN FOR STATIC CHECKING
+ *
+ *     Every small development step is checked with:
+ *
+ *         make check
+ *
+ *
+ * 10. TREAT WARNINGS AND ERRORS AS DESIGN INFORMATION
+ *
+ *     Checker output is reviewed rather than simply ignored.
+ *
+ *
+ * DEVELOPMENT / VERIFICATION PROCEDURE
+ * ------------------------------------
+ *
+ * Changes are deliberately made incrementally.
+ *
+ *     1. Understand the required hardware behavior.
+ *
+ *     2. Add one small piece of logic.
+ *
+ *     3. Run:
+ *
+ *            make check
+ *
+ *     4. Understand any warning or error.
+ *
+ *     5. Correct the design before proceeding.
+ *
+ *     6. When the design checks successfully:
+ *
+ *            make build
+ *
+ *     7. Program the FPGA:
+ *
+ *            make load
+ *
+ *     8. Verify the physical hardware behavior.
+ *
+ *
+ * CHANGE LOG
+ * ----------
+ *
+ * 2026-08-10
+ *
+ *     Initial development.
+ *
+ *     - Created uart_address_sender module.
+ *
+ *     - Defined external inputs:
+ *
+ *           clk
+ *           rst
+ *           start
+ *           address[16]
+ *
+ *     - Defined external outputs:
+ *
+ *           tx
+ *           busy
+ *
+ *     - Instantiated existing hardware-verified uart_tx module.
+ *
+ *     - Connected module clock and reset to uart_tx.
+ *
+ *     - Instantiated shared hex_to_ascii converter.
+ *
+ *     - Added three-bit msg_index state register.
+ *
+ *     - Added one-bit msg_active state register.
+ *
+ *     - Added explicit DFF hold defaults:
+ *
+ *           msg_index.d  = msg_index.q
+ *           msg_active.d = msg_active.q
+ *
+ *     - Added message-start detection.
+ *
+ *     - Added first address-nibble selection:
+ *
+ *           msg_index = 1
+ *
+ *               converter.nibble = address[15:12]
+ *
+ *     - Added default UART data character:
+ *
+ *           ASCII 'A' = 8h41
+ *
+ *     - Connected internal uart.tx to module output tx.
+ *
+ *     - Connected internal uart.busy to module output busy.
+ *
+ *     - Added explicit inactive default for uart.start.
+ *
+ *
+ * CURRENT DEVELOPMENT STATUS
+ * --------------------------
+ *
+ * Completed:
+ *
+ *     [X] Module interface
+ *     [X] UART transmitter instance
+ *     [X] UART clock/reset wiring
+ *     [X] Hex-to-ASCII converter instance
+ *     [X] Message index storage
+ *     [X] Message-active storage
+ *     [X] State hold defaults
+ *     [X] Message start recognition
+ *     [X] First address-nibble selection
+ *     [X] Default UART character
+ *     [X] tx output wiring
+ *     [X] busy output wiring
+ *
+ *
+ * Still to implement:
+ *
+ *     [ ] Select address[11:8] for msg_index 2
+ *
+ *     [ ] Select address[7:4] for msg_index 3
+ *
+ *     [ ] Select address[3:0] for msg_index 4
+ *
+ *     [ ] Route converter.ascii into uart.data for address digits
+ *
+ *     [ ] Generate a one-clock uart.start pulse for each character
+ *
+ *     [ ] Wait for uart.busy before advancing the message
+ *
+ *     [ ] Advance msg_index from 0 through 4
+ *
+ *     [ ] Clear msg_active after the final character
+ *
+ *     [ ] Instantiate uart_address_sender in alchitry_top.luc
+ *
+ *     [ ] Remove the temporary UART test sequencer from alchitry_top.luc
+ *
+ *     [ ] Build and load the completed design
+ *
+ *     [ ] Verify actual live-address transmission on physical hardware
+ *
+ *     [ ] Connect received address to the PySide6 diagnostic GUI
+ */
+
+
+module uart_address_sender (
+    /*
+     * clk
+     * ---
+     *
+     * Main FPGA clock.
+     *
+     * This clock drives all state storage in this module and is passed
+     * directly to the internal uart_tx instance.
+     */
+    input clk,
+
+
+    /*
+     * rst
+     * ---
+     *
+     * Active reset input for this module.
+     *
+     * Reset initializes msg_index, msg_active, and the internal UART
+     * transmitter into known states.
+     */
+    input rst,
+
+
+    /*
+     * start
+     * -----
+     *
+     * Request to begin transmitting one complete address message.
+     *
+     * The request is accepted only while msg_active is LOW.
+     */
+    input start,
+
+
+    /*
+     * address[16]
+     * -----------
+     *
+     * Sixteen-bit FPGA address to report to the host computer.
+     *
+     * Eventually alchitry_top.luc will connect active_address directly
+     * to this input.
+     */
+    input address[16],
+
+
+    /*
+     * tx
+     * --
+     *
+     * UART serial transmit waveform.
+     *
+     * This output directly mirrors uart.tx from the internal uart_tx
+     * instance.
+     */
+    output tx,
+
+
+    /*
+     * busy
+     * ----
+     *
+     * Indicates that this address-message module is busy.
+     *
+     * At this stage of development it mirrors uart.busy.
+     *
+     * Later we may choose to make this represent the state of the entire
+     * five-character message rather than only one UART character.
+     */
+    output busy
+) {
+
+
+    /**********************************************************************
+     * LOW-LEVEL UART TRANSMITTER
+     **********************************************************************/
+
+    /*
+     * Instantiate one uart_tx hardware block.
+     *
+     * uart_tx is responsible only for transmitting ONE eight-bit byte
+     * using UART 8N1 framing.
+     *
+     * The surrounding address-sender logic decides:
+     *
+     *     - what byte to send,
+     *     - when to start sending it,
+     *     - and which message character comes next.
+     */
+    uart_tx uart (
+        .clk(clk),
+        .rst(rst)
+    )
+
+
+    /**********************************************************************
+     * HEXADECIMAL-TO-ASCII CONVERTER
+     **********************************************************************/
+
+    /*
+     * One converter is shared by all four address nibbles.
+     *
+     * We do not need four converters because UART transmission is serial:
+     * only one hexadecimal character is needed at any instant.
+     *
+     * msg_index will select which four address bits are connected to
+     * converter.nibble.
+     */
+    hex_to_ascii converter
+
+
+    /**********************************************************************
+     * MESSAGE POSITION STATE
+     **********************************************************************/
+
+    /*
+     * msg_index[3]
+     * ------------
+     *
+     * Remembers which character of the UART address message is currently
+     * being processed.
+     *
+     * Character positions:
+     *
+     *     0 -> ASCII 'A'
+     *     1 -> address[15:12]
+     *     2 -> address[11:8]
+     *     3 -> address[7:4]
+     *     4 -> address[3:0]
+     *
+     * Why three bits?
+     *
+     * Three flip-flops can represent:
+     *
+     *     000 = 0
+     *     001 = 1
+     *     010 = 2
+     *     011 = 3
+     *     100 = 4
+     *     101 = 5
+     *     110 = 6
+     *     111 = 7
+     *
+     * We only use states 0 through 4.
+     */
+    dff msg_index[3] (
+        .clk(clk),
+        .rst(rst)
+    )
+
+
+    /**********************************************************************
+     * MESSAGE-ACTIVE STATE
+     **********************************************************************/
+
+    /*
+     * msg_active
+     * ----------
+     *
+     * Remembers whether a complete address message is currently being
+     * transmitted.
+     *
+     *     0 = IDLE
+     *     1 = MESSAGE ACTIVE
+     *
+     * Only one flip-flop is required because this state has only two
+     * possible values.
+     */
+    dff msg_active (
+        .clk(clk),
+        .rst(rst)
+    )
+    /*
+ * char_sent
+ * ---------
+ *
+ * Remembers whether the character selected by msg_index has already
+ * been launched into the UART transmitter.
+ *
+ * 0 = current character has not yet been started
+ * 1 = current character has been started
+ *
+ * This state bit prevents the control logic from repeatedly starting
+ * the same UART character while waiting for transmission to complete.
+ */
+dff char_sent (
+    .clk(clk),
+    .rst(rst)
+)
+
+
+
+    /**********************************************************************
+     * COMBINATIONAL CONTROL LOGIC
+     **********************************************************************/
+
+    always {
+        /******************************************************************
+         * SAFE DEFAULTS
+         *
+         * Defaults are assigned BEFORE conditional logic.
+         *
+         * Later conditions may override these assignments.
+         ******************************************************************/
+
+        /*
+         * Default converter input.
+         *
+         * Until a message position explicitly selects an address nibble,
+         * present hexadecimal zero to the converter.
+         *
+         * hex_to_ascii will therefore produce ASCII '0'.
+         */
+        converter.nibble = 4h0
+
+
+        /*
+         * Default msg_index behavior:
+         *
+         * Hold the currently stored character position.
+         *
+         * q = current value
+         * d = next value
+         */
+        msg_index.d = msg_index.q
+
+
+        /*
+         * Default msg_active behavior:
+         *
+         * Remain in the current idle/active state.
+         */
+        msg_active.d = msg_active.q
+        char_sent.d = char_sent.q
+
+
+        /*
+         * Default UART start request.
+         *
+         * LOW means:
+         *
+         *     "Do not begin transmitting a new byte this clock."
+         *
+         * Later sequencing logic will momentarily override this with 1
+         * when a new character is ready to transmit.
+         */
+        uart.start = 0
+
+
+        /*
+         * Default UART data byte.
+         *
+         * 8h41 is ASCII uppercase 'A'.
+         *
+         * Message position zero uses this byte as the message identifier.
+         */
+        uart.data = 8h41
+
+
+        /******************************************************************
+         * BEGIN NEW ADDRESS MESSAGE
+         ******************************************************************/
+
+        /*
+         * Accept a start request only when no message is already active.
+         *
+         * start = 1
+         * msg_active.q = 0
+         *
+         * causes:
+         *
+         *     msg_active.d = 1
+         *
+         *         Begin/remember that a message is active.
+         *
+         *     msg_index.d = 0
+         *
+         *         Begin at message character zero, ASCII 'A'.
+         *
+         * The ~ operator means logical/bitwise inversion:
+         *
+         *     ~0 = 1
+         *     ~1 = 0
+         */
+        if (start & ~msg_active.q) {
+            msg_active.d = 1
+            msg_index.d = 0
+        }
+
+
+        /******************************************************************
+         * ADDRESS NIBBLE SELECTION
+         ******************************************************************/
+
+        /*
+         * msg_index acts as the select input of a multiplexer.
+         *
+         * At this stage only message position 1 has been implemented.
+         *
+         * When:
+         *
+         *     msg_index.q = 1
+         *
+         * connect:
+         *
+         *     address[15:12]
+         *
+         * to:
+         *
+         *     converter.nibble
+         *
+         *
+         * Example:
+         *
+         *     address = 16hF123
+         *
+         *     address[15:12] = 4hF
+         *
+         * The hex_to_ascii module then converts:
+         *
+         *     4hF
+         *
+         * into:
+         *
+         *     8h46
+         *
+         * which is ASCII 'F'.
+         */
+        case (msg_index.q) {
+            3d1:
+            converter.nibble = address[15:12]
+            uart.data = converter.ascii
+
+            3d2:
+            converter.nibble = address[11:8]
+            uart.data = converter.ascii
+
+            3d3:
+            converter.nibble = address[7:4]
+            uart.data = converter.ascii
+
+            3d4:
+            converter.nibble = address[3:0]
+            uart.data = converter.ascii
+        }
+
+
+        /******************************************************************
+         * OUTPUT CONNECTIONS
+         ******************************************************************/
+
+        /*
+         * Pass the physical UART serial waveform to this module's tx
+         * output.
+         *
+         * This is effectively a wire:
+         *
+         *     uart.tx --------> tx
+         */
+        tx = uart.tx
+
+
+        /*
+         * For the current development stage, expose uart.busy directly.
+         *
+         * Later we will review whether this output should instead indicate
+         * that the ENTIRE five-character message is active.
+         */
+        busy = uart.busy
+    }
+}
+
