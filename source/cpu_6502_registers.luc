@@ -220,7 +220,6 @@ module cpu_6502_registers (
         .clk(clk),
         .rst(rst)
     )
-    a = a_reg.q
 
     /*
      * X - X INDEX REGISTER
@@ -238,7 +237,29 @@ module cpu_6502_registers (
         .clk(clk),
         .rst(rst)
     )
-    x = x_reg.q
+        /*
+     * COMBINATIONAL REGISTER CONNECTIONS
+     * ----------------------------------
+     *
+     * Until CPU control logic is added, A and X simply retain their
+     * current stored values.
+     *
+     * The remaining programmer-visible registers have not yet been
+     * implemented, so they are temporarily driven to known zero values.
+     */
+    always {
+        a_reg.d = a_reg.q
+        x_reg.d = x_reg.q
+
+        a = a_reg.q
+        x = x_reg.q
+
+        y = 8h00
+        sp = 8h00
+        pc = 16h0000
+        p = 8h00
+    }
+}
 
 
 
