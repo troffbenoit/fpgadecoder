@@ -252,6 +252,54 @@ module cpu_6502_registers (
     )
 
     /*
+     * SP - STACK POINTER REGISTER
+     *
+     * Eight flip-flops that physically store the current value of the
+     * 6502 stack pointer inside the FPGA.
+     *
+     * sp_reg.q is the present stored value.
+     * The complete 6502 stack address will eventually be $0100 + SP.
+     */
+    dff sp_reg[8] (
+        .clk(clk),
+        .rst(rst)
+    )
+    /*
+     * PC - PROGRAM COUNTER REGISTER
+     *
+     * Sixteen flip-flops that physically store the current value of the
+     * 6502 program counter inside the FPGA.
+     *
+     * pc_reg.q is the present stored value.
+     */
+    dff pc_reg[16] (
+        .clk(clk),
+        .rst(rst)
+    )
+    /*
+     * P - PROCESSOR STATUS REGISTER
+     *
+     * Eight flip-flops that physically store the current value of the
+     * 6502 processor status register inside the FPGA.
+     *
+     * Bit layout:
+     *   7 N  Negative
+     *   6 V  Overflow
+     *   5 -  Reserved / unused
+     *   4 B  Break
+     *   3 D  Decimal
+     *   2 I  Interrupt disable
+     *   1 Z  Zero
+     *   0 C  Carry
+     *
+     * p_reg.q is the present stored value.
+     */
+    dff p_reg[8] (
+        .clk(clk),
+        .rst(rst)
+    )
+
+    /*
      * COMBINATIONAL REGISTER CONNECTIONS
      * ----------------------------------
      *
@@ -265,15 +313,17 @@ module cpu_6502_registers (
         a_reg.d = a_reg.q
         x_reg.d = x_reg.q
         y_reg.d = y_reg.q
-
+        sp_reg.d = sp_reg.q
+        pc_reg.d = pc_reg.q
+        p_reg.d = p_reg.q
 
         a = a_reg.q
         x = x_reg.q
 
         y = y_reg.q
-        sp = 8h00
-        pc = 16h0000
-        p = 8h00
+        sp = sp_reg.q
+        pc = pc_reg.q
+        p = p_reg.q
     }
 }
 

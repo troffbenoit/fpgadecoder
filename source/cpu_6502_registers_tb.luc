@@ -11,6 +11,9 @@ testbench cpu_6502_registers_tb {
         $assert(dut.a == 8h00)
         $assert(dut.x == 8h00)
         $assert(dut.y == 8h00)
+        $assert(dut.sp == 8h00)
+        $assert(dut.pc == 16h0000)
+        $assert(dut.p == 8h00)
 
         dut.rst = 0
         $tick()
@@ -18,6 +21,9 @@ testbench cpu_6502_registers_tb {
         $assert(dut.a == 8h00)
         $assert(dut.x == 8h00)
         $assert(dut.y == 8h00)
+        $assert(dut.sp == 8h00)
+        $assert(dut.pc == 16h0000)
+        $assert(dut.p == 8h00)
     }
 }
 
