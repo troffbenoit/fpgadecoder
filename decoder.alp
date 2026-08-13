@@ -32,6 +32,12 @@
             {
                 "file": {
                     "type": "DiskFile",
+                    "path": "source/cpu_6502_registers_tb.luc"
+                }
+            },
+            {
+                "file": {
+                    "type": "DiskFile",
                     "path": "source/ls138_tb.luc"
                 }
             },

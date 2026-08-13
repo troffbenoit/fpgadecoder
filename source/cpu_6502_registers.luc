@@ -237,7 +237,21 @@ module cpu_6502_registers (
         .clk(clk),
         .rst(rst)
     )
-        /*
+    /*
+     * Y - Y INDEX REGISTER
+     *
+     * Eight flip-flops that physically store the current value of the
+     * 6502 Y index register inside the FPGA.
+     *
+     * y_reg.q is the present stored value.
+     * The value is exposed outside this module through output y[8].
+     */
+    dff y_reg[8] (
+        .clk(clk),
+        .rst(rst)
+    )
+
+    /*
      * COMBINATIONAL REGISTER CONNECTIONS
      * ----------------------------------
      *
@@ -250,11 +264,13 @@ module cpu_6502_registers (
     always {
         a_reg.d = a_reg.q
         x_reg.d = x_reg.q
+        y_reg.d = y_reg.q
+
 
         a = a_reg.q
         x = x_reg.q
 
-        y = 8h00
+        y = y_reg.q
         sp = 8h00
         pc = 16h0000
         p = 8h00

@@ -1,0 +1,24 @@
+testbench cpu_6502_registers_tb {
+
+    cpu_6502_registers dut
+
+    test reset_test {
+
+        dut.clk = 0
+        dut.rst = 1
+        $tick()
+
+        $assert(dut.a == 8h00)
+        $assert(dut.x == 8h00)
+        $assert(dut.y == 8h00)
+
+        dut.rst = 0
+        $tick()
+
+        $assert(dut.a == 8h00)
+        $assert(dut.x == 8h00)
+        $assert(dut.y == 8h00)
+    }
+}
+
+
