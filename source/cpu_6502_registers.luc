@@ -120,6 +120,9 @@ module cpu_6502_registers (
      */
     input clk,
 
+    input data_in[8],
+    input load_a,
+
 
     /*
      * rst
@@ -310,7 +313,12 @@ module cpu_6502_registers (
      * implemented, so they are temporarily driven to known zero values.
      */
     always {
-        a_reg.d = a_reg.q
+    if(load_a){
+            a_reg.d = data_in
+        }else{
+            a_reg.d = a_reg.q
+        }
+
         x_reg.d = x_reg.q
         y_reg.d = y_reg.q
         sp_reg.d = sp_reg.q

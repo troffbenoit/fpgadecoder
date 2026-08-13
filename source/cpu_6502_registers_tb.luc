@@ -5,6 +5,8 @@ testbench cpu_6502_registers_tb {
     test reset_test {
 
         dut.clk = 0
+        dut.data_in = 8h00
+        dut.load_a = 0
         dut.rst = 1
         $tick()
 
@@ -16,9 +18,11 @@ testbench cpu_6502_registers_tb {
         $assert(dut.p == 8h00)
 
         dut.rst = 0
+        dut.data_in = 8h5A
+        dut.load_a = 1
         $tick()
 
-        $assert(dut.a == 8h00)
+        $assert(dut.a == 8h5A)
         $assert(dut.x == 8h00)
         $assert(dut.y == 8h00)
         $assert(dut.sp == 8h00)

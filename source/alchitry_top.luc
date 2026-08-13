@@ -592,6 +592,8 @@ module alchitry_top (
              *     uart.tx
              *     uart.busy
              */
+            cpu_6502_registers cpu_regs
+
             uart_address_sender uart_sender
 
 
@@ -669,6 +671,8 @@ module alchitry_top (
      * start normally remains LOW and is asserted for one FPGA clock when
      * a new button press is detected.
      */
+    cpu_regs.data_in = 8h5A
+    cpu_regs.load_a = 1
     uart_sender.start = 0
 
     /*
@@ -960,8 +964,7 @@ module alchitry_top (
         } else {
             active_address = manual_address
         }
-        uart_sender.address = active_address
-
+        uart_sender.address = c{8h00, cpu_regs.a}
 
 
         /**********************************************************************
