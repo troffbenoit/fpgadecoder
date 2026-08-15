@@ -27,10 +27,11 @@
  *          hexadecimal seven-segment display and mirror important states on
  *          LEDs for bench troubleshooting.
  *
- *       5. Provide temporary hardware-development diagnostics:
- *            - UART transmit test: send ASCII 'A' at 115200 baud.
- *            - 1 kHz square-wave test on Bank-B outputs for oscilloscope
- *              verification of physical FPGA pin routing.
+ *       5. Provide hardware-development diagnostics and visibility:
+ *            - UART transmit path for observing selected internal values.
+ *            - 1 kHz square-wave reference on BR2 B41 for oscilloscope
+ *              verification of FPGA operation and physical pin routing.
+ *            - Active-low ROM chip select directly on BR2 B42.
  *
  * DESIGN PHILOSOPHY:
  *     This source is intentionally verbose. The comments explain not only
@@ -59,8 +60,8 @@
  *         A signal ending in "_n" is asserted when LOW.
  *
  *         Example:
- *             rom_cs_n == 0  -> ROM selected
- *             rom_cs_n == 1  -> ROM not selected
+ *             br_rom_cs_n == 0  -> ROM selected
+ *             br_rom_cs_n == 1  -> ROM not selected
  *
  *     Clock:
  *         The Alchitry Au V2 system clock is 100 MHz.
@@ -70,13 +71,13 @@
  *         reset_conditioner creates the internal active-high synchronous/
  *         conditioned reset signal named rst.
  *
- *     Bank-B diagnostic outputs:
- *         br2_test   -> currently carries the generated 1 kHz square wave.
- *         br2_probe2 -> currently carries the same 1 kHz square wave.
+ *     BR2 hardware outputs:
+ *         br2_test -> B41, verified 1 kHz diagnostic square wave.
+ *         br_rom_cs_n -> B42, verified active-low ROM chip select.
  *
- *         These are temporary development signals used to prove that the
- *         FPGA logic, ACF constraint, connector routing, and oscilloscope
- *         measurement chain are all working correctly.
+ *         The signal names intentionally describe their real hardware
+ *         functions.  B41 remains a known-good diagnostic reference while
+ *         B42 is the actual ROM /CS output.
  *
  * CHANGE LOG:
  *
@@ -97,9 +98,9 @@
  *       - Hardware-verified UART data through the board USB/FTDI interface.
  *       - Added 100 MHz-to-1 kHz diagnostic square-wave divider.
  *       - Added Bank-B diagnostic output br2_test.
- *       - Added second Bank-B diagnostic output br2_probe2.
- *       - Hardware-verified two simultaneous 1 kHz square waves with an
- *         oscilloscope.
+ *       - Added a second Bank-B diagnostic output (originally named
+ *         br2_probe2) and hardware-verified two simultaneous 1 kHz square
+ *         waves with an oscilloscope.
  *
  *     2026-08-02
  *       - Performed documentation and maintainability review.
@@ -109,6 +110,14 @@
  *         known-good busy-qualified rising-edge trigger.
  *       - Cleaned indentation around Bank-B diagnostic divider.
  *       - Preserved functional decoder behavior.
+ *
+ *     2026-08-15
+ *       - Renamed the B42 top-level output from the obsolete diagnostic name
+ *         br2_probe2 to br_rom_cs_n.
+*       - Preserved rom_cs_n as the internal ROM chip-select signal.
+*       - Routed rom_cs_n to physical BR2 output br_rom_cs_n on B42.
+ *       - Updated stale BR2 and UART comments to match verified hardware.
+ *       - Preserved B41 as the verified 1 kHz diagnostic output.
  *
  ******************************************************************************/
 
@@ -158,14 +167,16 @@ module alchitry_top (
      */
     output br2_test,
     /*
-     * BR2 ROM chip-select output.
+     * ROM /CS output on BR2 B42.
      *
      * Active LOW:
      *     0 = ROM selected
      *     1 = ROM not selected
+     *
+     * constraint/alchitry.acf must map
+     *     pin br_rom_cs_n B42
      */
-
-    output br2_probe2,
+    output br_rom_cs_n,
     output br_ram_cs_n,
     output br_uartb_cs_n,
     output br_acia_cs_n,
@@ -399,11 +410,12 @@ module alchitry_top (
      *     1 -> not selected
      **************************************************************************/
 
-    /*
-     * ROM chip select.
-     *
-     * The final equation combines LS138 regions y[4] through y[7].
-     */
+   /*
+    * Internal ROM chip-select signal.
+    *
+    * rom_cs_n contains the active-low ROM decode result.
+    * It is routed to BR2 B42 through the top-level output br_rom_cs_n.
+    */
     sig rom_cs_n
 
     /*
@@ -509,8 +521,8 @@ module alchitry_top (
              * ---------------
              * Stores the PREVIOUS sampled state of io_button[0].
              *
-             * It performs the same rising-edge-detection job for the UART
-             * test trigger. A single press requests one ASCII 'A'.
+             * It performs rising-edge detection for the UART transmit trigger.
+             * A single press requests one complete formatted UART message.
              */
             dff uart_button_old
 
@@ -579,21 +591,21 @@ module alchitry_top (
             dff br2_square
 
             /*
-             * UART transmitter.
+             * 6502 register block.
              *
              * The surrounding .clk(clk) and .rst(rst) scopes automatically
-             * provide its system clock and reset connections.
-             *
-             * The top-level logic below supplies:
-             *     uart.start
-             *     uart.data
-             *
-             * and consumes:
-             *     uart.tx
-             *     uart.busy
+             * provide the system clock and reset connections.  The current
+             * hardware-development test continuously loads accumulator A with
+             * 8h5A so its stored value can be observed through the UART path.
              */
             cpu_6502_registers cpu_regs
 
+            /*
+             * UART address/message sender.
+             *
+             * The top-level logic supplies start and a 16-bit address/value.
+             * The module supplies tx and busy.
+             */
             uart_address_sender uart_sender
 
 
@@ -648,59 +660,48 @@ module alchitry_top (
          * Internal reset distributed to the .rst(rst) scope.
          */
         rst = reset_cond.out
-            /**********************************************************************
-     * UART ADDRESS TRANSMITTER
-     *
-     * Button 0 transmits the currently selected 16-bit address through
-     * the USB serial connection.
-     *
-     * Example:
-     *
-     *     active_address = 16hC000
-     *
-     * transmitted ASCII:
-     *
-     *     AC000
-     *
-     * The leading 'A' identifies this as an address message.
-     **********************************************************************/
 
-    /*
-     * Default transmit request.
-     *
-     * start normally remains LOW and is asserted for one FPGA clock when
-     * a new button press is detected.
-     */
-    cpu_regs.data_in = 8h5A
-    cpu_regs.load_a = 1
-    uart_sender.start = 0
+        /**********************************************************************
+         * 6502 REGISTER / UART HARDWARE OBSERVABILITY TEST
+         *
+         * The current verified development test continuously loads A with
+         * 8h5A.  Button 0 requests a UART message whose 16-bit payload is
+         * 16h005A, formed from 8h00 concatenated with cpu_regs.a.
+         *
+         * Observed serial output on hardware:
+         *
+         *     A005A
+         *
+         * This provides a direct, physical check that accumulator storage and
+         * the UART transmit path are both functioning.
+         **********************************************************************/
 
-    /*
-     * Continuously present the selected address to the sender.
-     *
-     * uart_address_sender captures this value internally when a new
-     * transmission begins.
-     */
+        /*
+         * Current accumulator hardware-test stimulus.
+         */
+        cpu_regs.data_in = 8h5A
+        cpu_regs.load_a = 1
 
-    /*
-     * Detect a rising edge on IO button 0.
-     *
-     * The sender must also be idle before accepting another request.
-     */
-    if (io_button[0] & ~uart_button_old.q & ~uart_sender.busy) {
-        uart_sender.start = 1
-    }
+        /*
+         * Default transmit request.  start is pulsed for one FPGA clock on a
+         * new button press while the sender is idle.
+         */
+        uart_sender.start = 0
 
-    /*
-     * Save the present button state for rising-edge detection on the
-     * next system clock.
-     */
-    uart_button_old.d = io_button[0]
+        if (io_button[0] & ~uart_button_old.q & ~uart_sender.busy) {
+            uart_sender.start = 1
+        }
 
-    /*
-     * Route the serialized UART output to the physical USB TX connection.
-     */
-    usb_tx = uart_sender.tx
+        /*
+         * Save the present button state for rising-edge detection on the next
+         * system clock.
+         */
+        uart_button_old.d = io_button[0]
+
+        /*
+         * Route the serialized UART output to the physical USB TX connection.
+         */
+        usb_tx = uart_sender.tx
 
 
 
@@ -820,11 +821,11 @@ module alchitry_top (
         }
 
         /*
-         * Drive both temporary Bank-B probe outputs from the same stored
-         * square-wave state.
+         * BR2 B41 diagnostic reference.
          *
-         * These two outputs were used to verify two physical connector pins
-         * simultaneously on a two-channel oscilloscope.
+         * B41 remains permanently useful as a known-good 1 kHz heartbeat for
+         * oscilloscope checks.  B42 is no longer a diagnostic probe; it is the
+         * real active-low ROM chip-select output br_rom_cs_n.
          */
         br2_test = br2_square.q
 
@@ -964,6 +965,12 @@ module alchitry_top (
         } else {
             active_address = manual_address
         }
+
+        /*
+         * For the current accumulator hardware test, transmit A as the low
+         * byte of a 16-bit value.  With A = 8h5A this becomes 16h005A and the
+         * formatted UART message is A005A.
+         */
         uart_sender.address = c{8h00, cpu_regs.a}
 
 
@@ -1059,7 +1066,7 @@ module alchitry_top (
          * whenever any one of these upper regions is selected.
          */
         rom_cs_n = y[4] & y[5] & y[6] & y[7]
-        br2_probe2 = rom_cs_n
+        br_rom_cs_n = rom_cs_n
 
         /*
          * RAM SELECT
