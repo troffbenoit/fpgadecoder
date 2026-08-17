@@ -16,3 +16,11 @@ token
 token
 token
 .decoder.lock
+
+# KiCad generated/local files
+*-backups/
+*.kicad_prl
+fp-info-cache
+*.lck
+~*.lck
+ERC*.rpt
