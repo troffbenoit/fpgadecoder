@@ -13,8 +13,6 @@ build/
 # Temporary files
 *.tmp
 token
-token
-token
 .decoder.lock
 
 # KiCad generated/local files
