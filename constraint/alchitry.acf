@@ -14,10 +14,17 @@ STANDARD(LVCMOS33), SIDE(TOP) {
 
     pin usb_tx USB_TX
 
+    // BR2 / adapter-board verified signal assignments
     pin br2_test B41
     pin br_rom_cs_n B42
     pin br_ram_cs_n B24
     pin br_uartb_cs_n B28
     pin br_acia_cs_n B30
 
+    // Adapter-board physical locations verified/known:
+    // B24 RAM_CS_N   -> our J11 pin 5
+    // B30 ACIA_CS_N  -> our J11 pin 6
+    // B28 UART_B_CS_N-> current B28 test point; active LOW at 0x5000
+    // B42 ROM_CS_N   -> ROM select; active LOW in 0x8000-0xFFFF
+    // B41 TEST       -> 1 kHz diagnostic output
 }
