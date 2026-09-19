@@ -18,7 +18,7 @@ STANDARD(LVCMOS33), SIDE(TOP) {
     pin br2_test B41
     pin br_rom_cs_n B42
     pin br_ram_cs_n B24
-    pin br_uartb_cs_n B28
+    pin br_uartb_cs_n B22
     pin br_acia_cs_n B30
 
     // Adapter-board physical locations verified/known:

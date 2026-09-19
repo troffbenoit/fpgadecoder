@@ -208,7 +208,7 @@ module alchitry_top (
      * Five IO V2 pushbuttons.
      *
      * Current assignments:
-     *     io_button[0] -> UART test transmit trigger.
+     *     io_button[0] -> reserved (UART test now transmits automatically).
      *     io_button[4] -> single-step automatic address advance.
      *     io_button[2] -> mirrored to Au LED6.
      *     io_button[3] -> mirrored to Au LED7.
@@ -477,18 +477,17 @@ module alchitry_top (
         reset_conditioner reset_cond
 
         .rst(rst) {
+	   /*
+ 		* slow_counter[27]
+ 		* ----------------
+ 		* One-second timing counter for the UART test transmitter.
+ 		*
+ 		* The FPGA clock is 100 MHz. The counter runs from 0 through
+ 		* 99,999,999, then wraps to 0. The terminal count occurs once
+ 		* per second and is used to generate the UART transmit trigger.
+ 		*/
 
-            /*
-             * slow_counter[26]
-             * ----------------
-             * Reserved divider/counter for the future auto-run function.
-             *
-             * It is intentionally frozen in the current known-good design.
-             * Previous automatic stepping experiments caused display flicker,
-             * so auto-run remains disabled until it can be reintroduced and
-             * verified separately.
-             */
-            dff slow_counter[26]
+            dff slow_counter[27]
 
             /*
              * auto_counter[16]
@@ -515,16 +514,6 @@ module alchitry_top (
              * repeatedly stepping for every 100 MHz clock while held.
              */
             dff step_button_old
-
-            /*
-             * uart_button_old
-             * ---------------
-             * Stores the PREVIOUS sampled state of io_button[0].
-             *
-             * It performs rising-edge detection for the UART transmit trigger.
-             * A single press requests one complete formatted UART message.
-             */
-            dff uart_button_old
 
             /*
              * br2_counter[16]
@@ -665,8 +654,9 @@ module alchitry_top (
          * 6502 REGISTER / UART HARDWARE OBSERVABILITY TEST
          *
          * The current verified development test continuously loads A with
-         * 8h5A.  Button 0 requests a UART message whose 16-bit payload is
-         * 16h005A, formed from 8h00 concatenated with cpu_regs.a.
+         * 8h5A.  A one-second hardware counter requests a UART message whose
+         * 16-bit payload is 16h005A, formed from 8h00 concatenated with
+         * cpu_regs.a.
          *
          * Observed serial output on hardware:
          *
@@ -683,20 +673,14 @@ module alchitry_top (
         cpu_regs.load_a = 1
 
         /*
-         * Default transmit request.  start is pulsed for one FPGA clock on a
-         * new button press while the sender is idle.
+         * Default transmit request. start is pulsed for one FPGA clock when
+         * the one-second counter reaches terminal count and the sender is idle.
          */
         uart_sender.start = 0
 
-        if (io_button[0] & ~uart_button_old.q & ~uart_sender.busy) {
+        if ((slow_counter.q == 99999999) & ~uart_sender.busy) {
             uart_sender.start = 1
         }
-
-        /*
-         * Save the present button state for rising-edge detection on the next
-         * system clock.
-         */
-        uart_button_old.d = io_button[0]
 
         /*
          * Route the serialized UART output to the physical USB TX connection.
@@ -761,16 +745,14 @@ module alchitry_top (
 
 
         /**********************************************************************
-         * FUTURE AUTO-RUN CLOCK DIVIDER
-         **********************************************************************/
-
-        /*
-         * Explicitly hold slow_counter at its current value.
-         *
-         * This is intentional. The future automatic-run divider is disabled
-         * while the known-good single-step design is preserved.
+         * One-second UART transmit timing counter.
          */
-        slow_counter.d = slow_counter.q
+
+        slow_counter.d = slow_counter.q + 1
+
+        if (slow_counter.q == 99999999) {
+            slow_counter.d = 0
+         }
 
 
         /**********************************************************************
