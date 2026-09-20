@@ -72,12 +72,24 @@
  *         conditioned reset signal named rst.
  *
  *     BR2 hardware outputs:
- *         br2_test -> B41, verified 1 kHz diagnostic square wave.
- *         br_rom_cs_n -> B42, verified active-low ROM chip select.
+ *         br2_test      -> B41, verified 1 kHz diagnostic square wave.
+ *         br_rom_cs_n   -> B42, verified active-low ROM chip select.
+ *         br_ram_cs_n   -> B24, verified active-low RAM chip select.
+ *         br_uartb_cs_n -> B22, verified active-low UART-B chip select.
+ *         br_acia_cs_n  -> B30, verified active-low ACIA chip select.
  *
- *         The signal names intentionally describe their real hardware
- *         functions.  B41 remains a known-good diagnostic reference while
- *         B42 is the actual ROM /CS output.
+ *         Bench-verified adapter locations:
+ *             RAM /CS    -> J11 pin 5 -> B24
+ *             ACIA /CS   -> J11 pin 6 -> B30
+ *             ROM /CS    -> J11 pin 8 -> B42
+ *             UART-B /CS -> J12 pin 5 -> B22
+ *
+ *         IMPORTANT:
+ *             UART-B was previously assigned to B28. Bench testing proved
+ *             that B28 is J12 pin 6, while the required UART-B connection on
+ *             J12 pin 5 is B22. The ACF assignment is therefore B22.
+ *
+ *         B41 remains the known-good 1 kHz diagnostic reference.
  *
  * CHANGE LOG:
  *
@@ -114,10 +126,29 @@
  *     2026-08-15
  *       - Renamed the B42 top-level output from the obsolete diagnostic name
  *         br2_probe2 to br_rom_cs_n.
-*       - Preserved rom_cs_n as the internal ROM chip-select signal.
-*       - Routed rom_cs_n to physical BR2 output br_rom_cs_n on B42.
+ *       - Preserved rom_cs_n as the internal ROM chip-select signal.
+ *       - Routed rom_cs_n to physical BR2 output br_rom_cs_n on B42.
  *       - Updated stale BR2 and UART comments to match verified hardware.
  *       - Preserved B41 as the verified 1 kHz diagnostic output.
+ *
+ *     2026-09-19
+ *       - Changed the UART development test from a pushbutton-triggered
+ *         transmission to an automatic once-per-second transmission.
+ *       - Expanded slow_counter from 26 to 27 bits and configured it to count
+ *         100,000,000 clocks (0 through 99,999,999) at 100 MHz.
+ *       - Removed the obsolete uart_button_old rising-edge state register.
+ *       - Hardware-verified repeated UART output of A005A once per second on
+ *         the Au V2 USB/FTDI serial interface.
+ *       - Corrected UART-B physical output assignment from B28 to B22 after
+ *         oscilloscope testing proved J12 pin 5 is B22 and J12 pin 6 is B28.
+ *       - Hardware-verified complete active-low chip-select boundaries:
+ *             RAM    $0000-$1FFF -> B24 / J11 pin 5
+ *             UART-B $5000-$5FFF -> B22 / J12 pin 5
+ *             ACIA   $6000-$6FFF -> B30 / J11 pin 6
+ *             ROM    $8000-$FFFF -> B42 / J11 pin 8
+ *       - Preserved B41 as the independent 1 kHz diagnostic square wave.
+ *       - Verified the updated design with alchitry check and a successful
+ *         Vivado build before creating Git checkpoint 1fded49.
  *
  ******************************************************************************/
 
@@ -177,8 +208,25 @@ module alchitry_top (
      *     pin br_rom_cs_n B42
      */
     output br_rom_cs_n,
+
+    /*
+     * RAM /CS output on BR2 B24 / adapter J11 pin 5.
+     * Active LOW. Bench-verified for $0000-$1FFF.
+     */
     output br_ram_cs_n,
+
+    /*
+     * UART-B /CS output on BR2 B22 / adapter J12 pin 5.
+     * Active LOW. Bench-verified for $5000-$5FFF.
+     *
+     * B28 is J12 pin 6 and must not be used for this connection.
+     */
     output br_uartb_cs_n,
+
+    /*
+     * ACIA /CS output on BR2 B30 / adapter J11 pin 6.
+     * Active LOW. Bench-verified for $6000-$6FFF.
+     */
     output br_acia_cs_n,
 
     /*
@@ -477,16 +525,15 @@ module alchitry_top (
         reset_conditioner reset_cond
 
         .rst(rst) {
-	   /*
- 		* slow_counter[27]
- 		* ----------------
- 		* One-second timing counter for the UART test transmitter.
- 		*
- 		* The FPGA clock is 100 MHz. The counter runs from 0 through
- 		* 99,999,999, then wraps to 0. The terminal count occurs once
- 		* per second and is used to generate the UART transmit trigger.
- 		*/
-
+            /*
+             * slow_counter[27]
+             * ----------------
+             * One-second timing counter for the UART test transmitter.
+             *
+             * The FPGA clock is 100 MHz. The counter runs from 0 through
+             * 99,999,999, then wraps to 0. The terminal count occurs once
+             * per second and is used to generate the UART transmit trigger.
+             */
             dff slow_counter[27]
 
             /*
@@ -745,14 +792,19 @@ module alchitry_top (
 
 
         /**********************************************************************
-         * One-second UART transmit timing counter.
-         */
+         * ONE-SECOND UART TRANSMIT TIMING COUNTER
+         *
+         * At 100 MHz, 100,000,000 clock cycles equal one second.
+         * The 27-bit register increments every system clock and wraps after
+         * reaching 99,999,999. The terminal count is also used above to
+         * request one UART transmission while uart_sender is idle.
+         **********************************************************************/
 
         slow_counter.d = slow_counter.q + 1
 
         if (slow_counter.q == 99999999) {
             slow_counter.d = 0
-         }
+        }
 
 
         /**********************************************************************
